@@ -1,0 +1,17 @@
+# Direct dependencies of the macOS (Apple silicon) build. `requirements-macos.txt` is generated from
+# this file with exact versions and hashes for every package:
+#   MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile packaging/requirements-macos.in --python-version 3.13 \
+#     --python-platform aarch64-apple-darwin --generate-hashes -o packaging/requirements-macos.txt
+PySide6-Essentials==6.12.0
+PyMuPDF==1.28.2
+python-pptx==1.0.2
+python-docx==1.2.0
+pillow==13.0.0
+XlsxWriter==3.3.0
+pyobjc-framework-Cocoa==12.2.2
+pyobjc-framework-Quartz==12.2.2
+pyobjc-framework-Vision==12.2.2
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pytest==9.1.1
+pytest-qt==4.5.0

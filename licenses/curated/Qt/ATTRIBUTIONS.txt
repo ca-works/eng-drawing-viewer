@@ -1,0 +1,527 @@
+Third-party code in the Qt 6.12.0 source modules qtbase, qtsvg and qtimageformats, as declared
+by Qt's own qt_attribution.json files. The Mac app ships QtCore, QtGui, QtWidgets, QtDBus and
+QtSvg with the Cocoa platform, macOS style, image-format and SVG icon plugins. Some components
+below serve other platforms (for example Wayland, Android or Direct3D) and are not compiled
+into the Mac app; they are listed so that nothing is left out.
+
+Adobe Glyph List For New Fonts 1.7
+  in qtbase/src/gui/text
+  Licence: BSD 3-Clause "New" or "Revised" License
+  Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems
+
+Anti-aliasing rasterizer from FreeType 2
+  in qtbase/src/gui/painting
+  Licence: Freetype Project License or GNU General Public License v2.0 only
+  Copyright 2000-2016 by David Turner, Robert Wilhelm, and Werner Lemberg.
+
+Apache Tika MimeType Definitions c29724782854bb5a319f4a1940d0828a58ace3f9
+  in qtbase/src/corelib/mimetypes/3rdparty
+  Licence: Apache License 2.0
+  Copyright 2026 The Apache Software Foundation
+
+BLAKE2 (reference implementation) ed1974ea83433eba7b2d95c5dcd9ac33cb847913
+  in qtbase/src/3rdparty/blake2
+  Licence: Creative Commons Zero v1.0 Universal or Apache License 2.0
+  Copyright 2012, Samuel Neves <sneves@dei.uc.pt>
+
+Cocoa Platform Plugin
+  in qtbase/src/plugins/platforms/cocoa
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright (c) 2007-2008, Apple, Inc.
+
+D3D12 Memory Allocator v3.1.0
+  in qtbase/src/3rdparty/D3D12MemoryAllocator
+  Licence: MIT License
+  Copyright (c) 2019-2026 Advanced Micro Devices, Inc. All rights reserved.
+
+Data Compression Library (zlib) 1.3.2
+  in qtbase/src/3rdparty/zlib
+  Licence: zlib License
+  (C) 1995-2026 Jean-loup Gailly and Mark Adler
+
+DejaVu Fonts 2.37
+  in qtbase/src/3rdparty/wasm
+  Licence: Bitstream Vera Font License
+  Copyright (c) 2003 by Bitstream, Inc
+  Copyright (c) 2006 by Tavmjong Bah
+  (c) American Mathematical Society
+
+Easing Equations by Robert Penner
+  in qtbase/src/3rdparty/easing
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright (c) 2001 Robert Penner
+
+Efficient Binary-Decimal and Decimal-Binary Conversion Routines for IEEE Doubles 3.4.0
+  in qtbase/src/3rdparty/double-conversion
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright 2006-2012, the V8 project authors
+
+Emoji Segmenter 0.4.0
+  in qtbase/src/3rdparty/emoji-segmenter
+  Licence: Apache License 2.0
+  Copyright 2019 Google LLC
+
+Freetype 2 2.14.3
+  in qtbase/src/3rdparty/freetype
+  Licence: Freetype Project License or GNU General Public License v2.0 only
+  Copyright (c) 2007-2014 Adobe Systems Incorporated
+  Copyright (c) 2004-2026 Albert Chin-A-Young
+  Copyright (c) 2018-2026 Armin Hasitzka, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2000 Computing Research Labs, New Mexico State University
+  Copyright (c) 1996-2026 David Turner, Robert Wilhelm, Dominik Röttsches, and Werner Lemberg
+  Copyright (c) 2004-2026 David Turner, Robert Wilhelm, Werner Lemberg and George Williams
+  Copyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, and Moazin Khatti
+  Copyright (c) 2008-2026 David Turner, Robert Wilhelm, Werner Lemberg, and suzuki toshiya
+  Copyright (c) 2003-2026 David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2005-2026 David Turner
+  Copyright (c) 2007-2026 Derek Clegg and Michael Toftdal
+  Copyright (c) 2007 Dmitry Timoshkov for Codeweavers
+  Copyright (c) 2001-2015 Francesco Zappa Nardelli
+  Copyright (c) 2005, 2007, 2008, 2013 George Williams
+  Copyright (c) 2013-2026 Google, Inc. Google Author(s) Behdad Esfahbod and Stuart Gill
+  Copyright (c) 2013-2022 Google, Inc.
+  Copyright (c) 2003 Huw D M Davies for Codeweavers
+  Copyright (c) 2010-2026 Joel Klinghed
+  Copyright (c) 1996-2026 Just van Rossum, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2003-2026 Masatake YAMATO and Redhat K.K.
+  Copyright (c) 2004-2026 Masatake YAMATO, Redhat K.K, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2019-2026 Nikhil Ramakrishnan, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2009-2026 Oran Agra and Mickey Gabel
+  Copyright (c) 2007-2026 Rahul Bhalerao <rahul.bhalerao@redhat.com>
+  Copyright (c) 2002-2026 Roberto Alameda
+  Copyright (c) 2015-2026 Werner Lemberg
+  Copyright (c) 2004-2026 suzuki toshiya, Masatake YAMATO, Red Hat K.K., David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2019 nyorain
+  Copyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, George Williams, and Dominik Röttsches
+  Copyright (C) 2009, 2023  Red Hat, Inc.
+
+Freetype 2 - Bitmap Distribution Format (BDF) support
+  in qtbase/src/3rdparty/freetype
+  Licence: MIT License
+  Copyright (c) 2000 Computing Research Labs, New Mexico State University
+  Copyright (c) 2001-2014 Francesco Zappa Nardelli
+
+Freetype 2 - Portable Compiled Format (PCF) support
+  in qtbase/src/3rdparty/freetype
+  Licence: MIT License and MIT Open Group variant
+  Copyright (c) 2001, 2012 David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2000-2014 Francesco Zappa Nardelli
+  Copyright (c) 1990, 1994, 1998 The Open Group
+
+Freetype 2 - zlib
+  in qtbase/src/3rdparty/freetype
+  Licence: zlib License
+  Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+Gradle wrapper 9.5.1
+  in qtbase/src/3rdparty/gradle
+  Licence: Apache License 2.0
+  Copyright (C) 2025 Gradle Inc.
+
+HarfBuzz-NG 14.5.0
+  in qtbase/src/3rdparty/harfbuzz-ng
+  Licence: MIT License
+  Copyright © 2010-2022  Google, Inc.
+  Copyright © 2015-2020  Ebrahim Byagowi
+  Copyright © 2019,2020  Facebook, Inc.
+  Copyright © 2012,2015  Mozilla Foundation
+  Copyright © 2011  Codethink Limited
+  Copyright © 2008,2010  Nokia Corporation and/or its subsidiary(-ies)
+  Copyright © 2009  Keith Stribley
+  Copyright © 2011  Martin Hosken and SIL International
+  Copyright © 2007  Chris Wilson
+  Copyright © 2005,2006,2020,2021,2022,2023  Behdad Esfahbod
+  Copyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023  Red Hat, Inc.
+  Copyright © 1998-2005  David Turner and Werner Lemberg
+  Copyright © 2016  Igalia S.L.
+  Copyright © 2022  Matthias Clasen
+  Copyright © 2018,2021  Khaled Hosny
+  Copyright © 2018,2019,2020  Adobe, Inc
+  Copyright © 2013-2015  Alexei Podtelezhnikov
+
+LibJPEG-turbo 3.2.0
+  in qtbase/src/3rdparty/libjpeg
+  Licence: Independent JPEG Group License and BSD 3-Clause "New" or "Revised" License
+
+LibPNG 1.6.58
+  in qtbase/src/3rdparty/libpng
+  Licence: libpng License and PNG Reference Library version 2
+  Copyright (c) 1995-2026 The PNG Reference Library Authors
+  Copyright (c) 2000-2026 Cosmin Truta
+  Copyright (c) 1998-2018 Glenn Randers-Pehrson
+  Copyright (c) 1996-1997 Andreas Dilger
+  Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+  Copyright (c) 2000-2017 Simon-Pierre Cadieux
+  Copyright (c) 2000-2017 Eric S. Raymond
+  Copyright (c) 2000-2017 Mans Rullgard
+  Copyright (c) 2000-2017 Gilles Vollant
+  Copyright (c) 2000-2017 James Yu
+  Copyright (c) 2000-2017 Mandar Sahastrabuddhe
+  Copyright (c) 1998-2000 Tom Lane
+  Copyright (c) 1998-2000 Willem van Schaik
+  Copyright (c) 1996-1997 John Bowler
+  Copyright (c) 1996-1997 Kevin Bracey
+  Copyright (c) 1996-1997 Sam Bushell
+  Copyright (c) 1996-1997 Magnus Holmgren
+  Copyright (c) 1996-1997 Greg Roelofs
+  Copyright (c) 1996-1997 Tom Tanner
+  Copyright (c) 1995-1996 Dave Martindale
+  Copyright (c) 1995-1996 Paul Schmidt
+  Copyright (c) 1995-1996 Tim Wegner
+
+MD4
+  in qtbase/src/3rdparty/md4
+  Licence: Public Domain
+  Written by Alexander Peslyak - better known as Solar Designer <solar@openwall.com> - in 2001, and placed in the public domain. There's absolutely no warranty.
+
+MD4C 0.5.3
+  in qtbase/src/3rdparty/md4c
+  Licence: MIT License
+  Copyright © 2016-2024 Martin Mitáš
+
+MD5
+  in qtbase/src/3rdparty/md5
+  Licence: Public Domain
+  Written by Colin Plumb in 1993, no copyright is claimed. Ian Jackson <ian@chiark.greenend.org.uk>.
+
+Mipmap generator for D3D12 0aa79bad78992da0b6a8279ddb9002c1753cb849
+  in qtbase/src/gui/rhi
+  Licence: MIT License
+  Copyright (c) 2015 Microsoft
+
+Native Style for Android
+  in qtbase/src/3rdparty/android
+  Licence: Apache License 2.0
+  Copyright (C) 2005 The Android Open Source Project
+
+OpenGL ES 2 Headers Revision 27673
+  in qtbase/src/gui/opengl
+  Licence: MIT License
+  Copyright (c) 2013-2014 The Khronos Group Inc.
+
+OpenGL Headers Revision 27684
+  in qtbase/src/gui/opengl
+  Licence: MIT License
+  Copyright (c) 2013-2014 The Khronos Group Inc.
+
+PCRE2 10.48
+  in qtbase/src/3rdparty/pcre2
+  Licence: BSD 3-clause "New" or "Revised" License with PCRE2 binary-like Packages Exception
+  Copyright (c) 1997-2007 University of Cambridge
+  Copyright (c) 2007-2024 Philip Hazel
+  Copyright (c) 2010-2024 Zoltan Herczeg
+
+PCRE2 - Stack-less Just-In-Time Compiler 10.48
+  in qtbase/src/3rdparty/pcre2
+  Licence: BSD 2-clause "Simplified" License
+  Copyright Zoltan Herczeg
+
+Pixman 0.17.12
+  in qtbase/src/3rdparty/pixman
+  Licence: MIT License
+  Copyright © 2009 Nokia Corporation
+
+Presentation Time Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/presentation-time
+  Licence: MIT License
+  Copyright © 2013, 2014 Collabora, Ltd.
+
+QEventDispatcher on macOS
+  in qtbase/src/corelib/kernel
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright (c) 2007-2008, Apple, Inc.
+
+SQLite 3.53.4
+  in qtbase/src/3rdparty/sqlite
+  Licence: SQLite Blessing
+  The authors disclaim copyright to the source code. However, a license can be obtained if needed.
+
+Secure Hash Algorithm SHA-1
+  in qtbase/src/3rdparty/sha1
+  Licence: Public Domain
+  Copyright (C) Dominik Reichl <dominik.reichl@t-online.de>
+  Copyright (C) 2016 The Qt Company Ltd
+
+Secure Hash Algorithm SHA-3 - Keccak 3.2
+  in qtbase/src/3rdparty/sha3
+  Licence: Creative Commons Zero v1.0 Universal
+  Guido Bertoni, Joan Daemen, Michaël Peeters and Gilles Van Assche.
+  To the extent possible under law, the implementers have waived all copyright
+  and related or neighboring rights to the source code in this file.
+
+Secure Hash Algorithm SHA-3 - brg_endian 1.0.0
+  in qtbase/src/3rdparty/sha3
+  Licence: BSD 2-clause "Simplified" License
+  Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.
+
+Secure Hash Algorithms SHA-384 and SHA-512
+  in qtbase/src/3rdparty/rfc6234
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright (c) 2011 IETF Trust and the persons identified as authors of the code.
+
+SipHash Algorithm
+  in qtbase/src/3rdparty/siphash
+  Licence: Creative Commons Zero v1.0 Universal
+  Copyright (C) 2012-2014 Jean-Philippe Aumasson
+  Copyright (C) 2012-2014 Daniel J. Bernstein <djb@cr.yp.to>
+  Copyright (C) 2016 Intel Corporation
+
+Smooth Scaling Algorithm
+  in qtbase/src/gui/painting
+  Licence: BSD 2-clause "Simplified" License and Imlib2 License
+  Copyright (C) 2004, 2005 Daniel M. Duley.
+  (C) Carsten Haitzler and various contributors.
+  (C) Willem Monsuwe <willem@stack.nl>
+
+TIFF Software Distribution (libtiff) 4.7.2
+  in qtimageformats/src/3rdparty/libtiff
+  Licence: libtiff License
+  Copyright (c) 1988-1997 Sam Leffler
+  Copyright (c) 1991-1997 Silicon Graphics, Inc.
+
+The Public Suffix List 2026-05-14_08-35-31_UTC
+  in qtbase/src/3rdparty/libpsl
+  Licence: Mozilla Public License 2.0
+  The list was originally provided by Jo Hermans <jo.hermans@gmail.com>.
+  It is now maintained on github (https://github.com/publicsuffix/list).
+
+TinyCBOR 7.0
+  in qtbase/src/3rdparty/tinycbor
+  Licence: MIT License
+  Copyright (C) 2015-2025 Intel Corporation
+
+Unicode Character Database (UCD) 36
+  in qtbase/src/corelib/text
+  Licence: Unicode License Agreement - Data Files and Software (2016)
+  Copyright (C) 1991-2025 Unicode, Inc.
+
+Unicode Common Locale Data Repository (CLDR) v48.2
+  in qtbase/src/corelib/text
+  Licence: Unicode License v3
+  Copyright (C) 2004-2025 Unicode, Inc.
+
+Vulkan API Registry 1.4.308
+  in qtbase/src/gui/vulkan
+  Licence: Apache License 2.0 or MIT License
+  Copyright (c) 2015-2025 The Khronos Group Inc.
+
+Vulkan Memory Allocator 3.3.0
+  in qtbase/src/3rdparty/VulkanMemoryAllocator
+  Licence: MIT License
+  Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.
+
+Wayland Color Management Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/color-management
+  Licence: MIT License
+  Copyright 2019 Sebastian Wick
+  Copyright 2019 Erwin Burema
+  Copyright 2020 AMD
+  Copyright 2020-2024 Collabora, Ltd.
+  Copyright 2024 Xaver Hugl
+  Copyright 2022-2025 Red Hat, Inc.
+
+Wayland Dialog Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/xdg-dialog
+  Licence: MIT License
+  Copyright © 2023 Carlos Garnacho
+
+Wayland EGLStream Controller Protocol 1.1.1
+  in qtbase/src/3rdparty/wayland/protocols/wl-eglstream
+  Licence: MIT License
+  Copyright (c) 2017, NVIDIA CORPORATION. All rights reserved.
+
+Wayland Fractional Scale Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/fractional-scale
+  Licence: MIT License
+  Copyright © 2022 Kenny Levinsen
+
+Wayland Fullscreen Shell Protocol unstable v1
+  in qtbase/src/3rdparty/wayland/protocols/fullscreen-shell
+  Licence: MIT License
+  Copyright © 2016 Yong Bakos
+  Copyright © 2015 Jason Ekstrand
+  Copyright © 2015 Jonas Ådahl
+
+Wayland KDE DBus Menu Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/appmenu
+  Licence: GNU Lesser General Public License 2.1 or later
+  Copyright 2017 David Edmundson
+
+Wayland Linux Dmabuf Unstable V1 Protocol unstable v1, version 3
+  in qtbase/src/3rdparty/wayland/protocols/linux-dmabuf
+  Licence: MIT License
+  Copyright © 2014, 2015 Collabora, Ltd.
+
+Wayland Linux Dmabuf V1 Protocol v1, version 5
+  in qtbase/src/3rdparty/wayland/protocols/linux-dmabuf
+  Licence: MIT License
+  Copyright © 2014, 2015 Collabora, Ltd.
+
+Wayland Pointer Gestures Protocol unstable v1, version 2
+  in qtbase/src/3rdparty/wayland/protocols/pointer-gestures
+  Licence: MIT License
+  Copyright © 2015, 2016 Red Hat
+
+Wayland Pointer Warp Protocol version 1
+  in qtbase/src/3rdparty/wayland/protocols/pointer-warp
+  Licence: MIT License
+  Copyright © 2024 Neal Gompa
+  Copyright © 2024 Xaver Hugl
+  Copyright © 2024 Matthias Klumpp
+  Copyright © 2024 Vlad Zahorodnii
+
+Wayland Primary Selection Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/wp-primary-selection
+  Licence: MIT License
+  Copyright © 2015, 2016 Red Hat
+
+Wayland Protocol 1.24.0
+  in qtbase/src/3rdparty/wayland/protocols/wayland
+  Licence: MIT License
+  Copyright © 2008-2011 Kristian Høgsberg
+  Copyright © 2010-2011 Intel Corporation
+  Copyright © 2012-2013 Collabora, Ltd.
+
+Wayland Scaler Protocol 2
+  in qtbase/src/3rdparty/wayland/protocols/scaler
+  Licence: MIT License
+  Copyright © 2013-2014 Collabora, Ltd.
+
+Wayland Session Management Protocol experimental V1
+  in qtbase/src/3rdparty/wayland/protocols/session-management
+  Licence: MIT License
+  Copyright 2018 Mike Blumenkrantz
+  Copyright 2018 Samsung Electronics Co., Ltd
+  Copyright 2018 Red Hat Inc.
+
+Wayland Tablet Protocol unstable v2, version 1
+  in qtbase/src/3rdparty/wayland/protocols/tablet
+  Licence: MIT License
+  Copyright 2014 © Stephen "Lyude" Chandler Paul
+  Copyright 2015-2016 © Red Hat, Inc.
+
+Wayland Text Input Protocol unstable v3
+  in qtbase/src/3rdparty/wayland/protocols/text-input/v3
+  Licence: MIT License
+  Copyright © 2012, 2013 Intel Corporation
+  Copyright © 2015, 2016 Jan Arne Petersen
+  Copyright © 2017, 2018 Red Hat, Inc.
+  Copyright © 2018       Purism SPC
+
+Wayland Text Input Protocol v1 unstable v1
+  in qtbase/src/3rdparty/wayland/protocols/text-input/v1
+  Licence: MIT License
+  Copyright © 2012, 2013 Intel Corporation
+
+Wayland Text Input Protocol v2 unstable v2
+  in qtbase/src/3rdparty/wayland/protocols/text-input/v2
+  Licence: HPND License
+  Copyright © 2012, 2013 Intel Corporation
+  Copyright © 2015, 2016 Jan Arne Petersen
+
+Wayland Viewporter Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/viewporter
+  Licence: MIT License
+  Copyright © 2013-2016 Collabora, Ltd.
+
+Wayland XDG Foreign Protocol 1
+  in qtbase/src/3rdparty/wayland/protocols/xdg-foreign
+  Licence: MIT License
+  Copyright © 2015-2016 Red Hat Inc.
+
+Wayland XDG Output Protocol unstable v1, version 3
+  in qtbase/src/3rdparty/wayland/protocols/xdg-output
+  Licence: MIT License
+  Copyright © 2017 Red Hat Inc.
+
+Wayland XDG Shell Protocol 1.18
+  in qtbase/src/3rdparty/wayland/protocols/xdg-shell
+  Licence: MIT License
+  Copyright © 2008-2013 Kristian Høgsberg
+  Copyright © 2013      Rafael Antognolli
+  Copyright © 2013      Jasper St. Pierre
+  Copyright © 2010-2013 Intel Corporation
+  Copyright © 2015-2017 Samsung Electronics Co., Ltd
+  Copyright © 2015-2017 Red Hat Inc.
+
+Wayland XDG System Bell Protocol 1.18
+  in qtbase/src/3rdparty/wayland/protocols/xdg-system-bell
+  Licence: MIT License
+  Copyright © 2016, 2023 Red Hat
+
+Wayland xdg-activation Protocol unstable v1, version 1
+  in qtbase/src/3rdparty/wayland/protocols/xdg-activation
+  Licence: MIT License
+  Copyright © 2020 Aleix Pol Gonzalez &lt;aleixpol@kde.org&gt;
+  Copyright © 2020 Carlos Garnacho &lt;carlosg@gnome.org&gt;
+
+Wayland xdg-decoration Protocol unstable v1, version 1
+  in qtbase/src/3rdparty/wayland/protocols/xdg-decoration
+  Licence: MIT License
+  Copyright © 2018 Simon Ser
+
+Wayland xdg-toplevel-icon Protocol version 1
+  in qtbase/src/3rdparty/wayland/protocols/xdg-toplevel-icon
+  Licence: MIT License
+  Copyright © 2024 Matthias Klumpp 2024 David Edmundson
+
+WebP (libwebp) 1.6.0
+  in qtimageformats/src/3rdparty/libwebp
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright (c) 2010, Google Inc. All rights reserved.
+
+Wintab API
+  in qtbase/src/3rdparty/wintab
+  Licence: LCS-Telegraphics License
+  Copyright 1991-1998 by LCS/Telegraphics.
+
+Wlr Data Control Unstable V1 Protocol 2
+  in qtbase/src/3rdparty/wayland/protocols/wlr-data-control
+  Licence: MIT License
+  Copyright © 2018 Simon Ser
+  Copyright © 2019 Ivan Molodetskikht
+
+X Server helper
+  in qtbase/src/gui/painting
+  Licence: X11 License and Historical Permission Notice and Disclaimer
+  Copyright (c) 1987, 1988 X Consortium
+  Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
+
+XCB-XInput
+  in qtbase/src/3rdparty/xcb
+  Licence: MIT License
+  Copyright (C) 2001-2006 Bart Massey, Jamey Sharp, and Josh Triplett.
+  Copyright (C) 2006 Peter Hutterer
+  Copyright (C) 2013 Daniel Martin
+
+XSVG
+  in qtbase/src/gui/util
+  Licence: Historical Permission Notice and Disclaimer - sell variant
+  Copyright 2002 USC/Information Sciences Institute
+
+forkfd
+  in qtbase/src/3rdparty/forkfd
+  Licence: MIT License
+  Copyright (C) 2016 Intel Corporation
+  Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com
+
+libdbus-1 headers 1.13.12
+  in qtbase/src/dbus
+  Licence: Academic Free License v2.1, or GNU General Public License v2.0 or later
+  Copyright (C) 2002, 2003 CodeFactory AB
+  Copyright (C) 2004, 2005 Red Hat, Inc.
+
+libpsl - C library to handle the Public Suffix List 664f3dc85259ec65e30248a61fa1c45b7b0e4c3f
+  in qtbase/src/3rdparty/libpsl
+  Licence: BSD 3-clause "New" or "Revised" License
+  Copyright 2014-2016 The Chromium Authors. All rights reserved.
+
+sRGB color profile icc file
+  in qtbase/src/3rdparty/icc
+  Licence: International Color Consortium License
+  Copyright International Color Consortium, 2015
+
+tl::expected 41d3e1f48d682992a2230b2a715bca38b848b269
+  in qtbase/src/corelib/global
+  Licence: Creative Commons Zero v1.0 Universal
+  To the extent possible under law, Sy Brand has waived all copyright and related or neighboring rights to the expected library. This work is published from: United Kingdom.

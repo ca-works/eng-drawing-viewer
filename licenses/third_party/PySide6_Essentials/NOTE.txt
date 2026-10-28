@@ -1,0 +1,1 @@
+Qt for Python 6.12.0, under the GNU LGPL v3 (or GPL v2/v3). The licence texts are in licenses/curated/Qt/.

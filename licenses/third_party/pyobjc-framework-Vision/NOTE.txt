@@ -1,0 +1,1 @@
+MIT licence, the same text as pyobjc-framework-Cocoa's LICENSE.txt in this folder.
