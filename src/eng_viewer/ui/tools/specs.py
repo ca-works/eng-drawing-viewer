@@ -77,7 +77,7 @@ def _avail_office() -> str:
 
 
 def _avail_ocr() -> str:
-    return "" if ocr_available() else "Needs macOS (built-in text recognition) or Tesseract OCR installed."
+    return "" if ocr_available() else "Needs macOS (built-in text recognition), or Tesseract OCR installed."
 
 
 def _avail_scan() -> str:

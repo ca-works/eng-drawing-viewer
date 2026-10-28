@@ -52,8 +52,12 @@ gh release create "v$VERSION" -R "$APP_REPO" --draft --target main \
 echo "==> Checking GitHub's checksums"
 gh api "repos/$APP_REPO/releases" --jq ".[] | select(.tag_name==\"v$VERSION\") | .assets[] | \"\(.digest) \(.name)\"" |
 while read -r digest name; do
-  want="sha256:$(grep "  $name\$" SHA256SUMS.txt | cut -d' ' -f1)"
-  [[ "$name" == SHA256SUMS.txt || "$digest" == "$want" ]] || { echo "Digest mismatch for $name" >&2; exit 1; }
+  if [[ "$name" == SHA256SUMS.txt ]]; then
+    want="sha256:$(shasum -a 256 SHA256SUMS.txt | cut -d' ' -f1)"
+  else
+    want="sha256:$(grep "  $name\$" SHA256SUMS.txt | cut -d' ' -f1 || true)"
+  fi
+  [[ "$digest" == "$want" ]] || { echo "Digest mismatch for $name" >&2; exit 1; }
   echo "    $name ok"
 done
 

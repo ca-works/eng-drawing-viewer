@@ -25,7 +25,7 @@ import pymupdf
 
 from .documents import extension, open_document
 from .raster_limits import check_pixels, max_dpi_for, render_page
-from .tool_support import find_office, unique_path
+from .tool_support import find_office, tessdata_dir, unique_path
 from .processes import run_conversion
 
 MM = 72.0 / 25.4
@@ -645,9 +645,38 @@ def ocr_engine() -> str | None:
             return "vision"
         except Exception:
             pass
-    if shutil.which("tesseract"):
+    if tessdata_dir() or shutil.which("tesseract"):
         return "tesseract"
     return None
+
+
+# Language names people type (en, en-US, German …) mapped to Tesseract's model names.
+TESSERACT_LANGS = {"en": "eng", "de": "deu", "fr": "fra", "it": "ita", "nl": "nld", "pt": "por", "es": "spa"}
+
+
+def tesseract_languages(requested: list[str] | None, tessdata: str | None) -> str:
+    """'eng+deu'-style language string for Tesseract, checked against the installed models."""
+    have = None
+    if tessdata:
+        have = sorted(p[:-12] for p in os.listdir(tessdata) if p.endswith(".traineddata"))
+    if not requested:
+        import locale
+
+        wanted = ["eng"]
+        local = TESSERACT_LANGS.get((locale.getlocale()[0] or "")[:2].lower())
+        if local and local != "eng" and (have is None or local in have):
+            wanted.append(local)
+        return "+".join(wanted)
+    codes = []
+    for item in requested:
+        code = item.strip().replace("_", "-").split("-")[0].lower()
+        code = TESSERACT_LANGS.get(code, code)
+        if have is not None and code not in have:
+            raise ToolError(f"Text recognition for “{item.strip()}” is not available. "
+                            f"Available: {', '.join(sorted(k for k, v in TESSERACT_LANGS.items() if v in have))}.")
+        if code not in codes:
+            codes.append(code)
+    return "+".join(codes)
 
 
 def _vision_lines(png: bytes, languages: list[str] | None, fast: bool):
@@ -674,8 +703,8 @@ def _vision_lines(png: bytes, languages: list[str] | None, fast: bool):
     return out
 
 
-def _tesseract_lines(page, dpi: int, language: str):
-    tp = page.get_textpage_ocr(dpi=dpi, full=True, language=language or "eng")
+def _tesseract_lines(page, dpi: int, language: str, tessdata: str | None = None):
+    tp = page.get_textpage_ocr(dpi=dpi, full=True, language=language or "eng", tessdata=tessdata)
     out = []
     r = page.rect
     for x0, y0, x1, y1, word, *_ in page.get_text("words", textpage=tp):
@@ -689,8 +718,10 @@ def ocr(path: str, output: str, languages: str = "", skip_text_pages: bool = Tru
     if engine is None:
         raise ToolError("Text recognition needs macOS, or Tesseract OCR installed on this computer.")
     out_path = _check_output(output, [path])
-    doc = _as_pdf(path)
     langs = [l.strip() for l in languages.split(",") if l.strip()] or None
+    tessdata = tessdata_dir() if engine == "tesseract" else None
+    tess_langs = tesseract_languages(langs, tessdata) if engine == "tesseract" else ""
+    doc = _as_pdf(path)
     font = pymupdf.Font("helv")
     added = pages_done = 0
     try:
@@ -701,7 +732,7 @@ def ocr(path: str, output: str, languages: str = "", skip_text_pages: bool = Tru
                 png = render_page(page, dpi=dpi, alpha=False).tobytes("png")
                 lines = _vision_lines(png, langs, fast=False)
             else:
-                lines = _tesseract_lines(page, dpi, "+".join(langs) if langs else "eng")
+                lines = _tesseract_lines(page, dpi, tess_langs, tessdata)
             r = page.rect
             for text, nx, ny, nw, nh in lines:
                 h = nh * r.height

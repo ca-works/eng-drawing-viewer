@@ -25,6 +25,55 @@ def shortcut_text(seq: QKeySequence | str | QKeySequence.StandardKey) -> str:
     return ks.toString(QKeySequence.SequenceFormat.NativeText)
 
 
+def key_sequences(spec) -> list[QKeySequence]:
+    """Every key sequence for ``spec`` (a string, standard key, or a list of them), without duplicates.
+
+    Qt treats an action listing the same keys twice as ambiguous and then ignores the keys, which
+    is easy to do by accident when a standard key (Redo is Ctrl+Y on Windows) is combined with an
+    explicit one.
+    """
+    items = spec if isinstance(spec, (list, tuple)) else [spec]
+    out: list[QKeySequence] = []
+    seen: set[str] = set()
+    for item in items:
+        seqs = QKeySequence.keyBindings(item) if isinstance(item, QKeySequence.StandardKey) else [QKeySequence(item)]
+        for ks in seqs:
+            key = ks.toString(QKeySequence.SequenceFormat.PortableText)
+            if key and key not in seen:
+                seen.add(key)
+                out.append(ks)
+    return out
+
+
+def assign_mnemonics(menu_owner) -> None:
+    """Give every menu item an Alt-key mnemonic, as Windows users expect (unused on macOS).
+
+    Items that already have one keep it. Otherwise the first free letter that starts a word is
+    used, then any free letter.
+    """
+    import re
+
+    def mnemonic(text: str):
+        m = re.search(r"&(\S)", text.replace("&&", ""))
+        return m.group(1).lower() if m else None
+
+    actions = [a for a in menu_owner.actions() if not a.isSeparator() and a.text()]
+    used = {m for a in actions if (m := mnemonic(a.text()))}
+    for a in actions:
+        text = a.text()
+        if mnemonic(text) is None:
+            plain = text.replace("&&", "\0")
+            starts = [m.start() for m in re.finditer(r"(?<![\w])[A-Za-z0-9]", plain)]
+            rest = [i for i, c in enumerate(plain) if c.isalnum() and i not in starts]
+            for i in starts + rest:
+                if plain[i].lower() not in used:
+                    used.add(plain[i].lower())
+                    a.setText((plain[:i] + "&" + plain[i:]).replace("\0", "&&"))
+                    break
+        if a.menu() is not None:
+            assign_mnemonics(a.menu())
+
+
 def tip(text: str, seq=None) -> str:
     if seq is None:
         return text

@@ -1,9 +1,10 @@
 """Offline spell checking.
 
 ``WordListSpeller`` uses the bundled ``english_words.txt`` (≈140k words from SCOWL)
-plus words the user adds. On macOS ``platform.macos.MacSpeller`` uses the
-system spelling service instead (also fully local), which follows the user's
-languages and learned words.
+plus words the user adds (saved in the settings). On macOS
+``platform.macos.MacSpeller`` and on Windows ``platform.windows_spell.WindowsSpeller``
+use the system spelling service instead (also fully local), which follows the
+user's languages and learned words.
 """
 from __future__ import annotations
 
@@ -29,8 +30,9 @@ def checkable(word: str) -> bool:
 class WordListSpeller:
     name = "Built-in dictionary"
 
-    def __init__(self, words_path: Path, user_words: set[str] | None = None):
+    def __init__(self, words_path: Path, user_words: set[str] | None = None, on_learn=None):
         self._path = Path(words_path)
+        self._on_learn = on_learn  # called with the sorted user words after "Learn Spelling"
         self._words: set[str] | None = None
         self._user = {w.lower() for w in (user_words or set())}
         self._ignored: set[str] = set()
@@ -104,6 +106,8 @@ class WordListSpeller:
 
     def learn(self, word: str):
         self._user.add(word.lower())
+        if self._on_learn is not None:
+            self._on_learn(self.user_words())
 
     def ignore(self, word: str):
         self._ignored.add(word.lower())

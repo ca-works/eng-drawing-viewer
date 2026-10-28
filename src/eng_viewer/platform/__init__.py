@@ -18,7 +18,9 @@ def reveal_in_file_manager(path: str | None) -> None:
         if IS_MAC:
             subprocess.Popen(["/usr/bin/open", "-R", str(p)])
         elif IS_WIN:
-            subprocess.Popen(["explorer", "/select,", str(p)])
+            from .windows import reveal_in_explorer
+
+            reveal_in_explorer(str(p))
         else:
             from PySide6.QtCore import QUrl
             from PySide6.QtGui import QDesktopServices

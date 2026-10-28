@@ -1,0 +1,8 @@
+# Keep LF line endings on every platform, so a build from a Windows checkout contains exactly
+# the same text files as a build from the published source archive.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.ico binary
+*.icns binary

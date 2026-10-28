@@ -171,8 +171,11 @@ def test_specs_bundle_licence_texts():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    for spec in ("packaging/macos/ENG_Drawing_Viewer_mac.spec", "packaging/windows/ENG_Drawing_Viewer_win.spec"):
-        if not (root / spec).exists():  # the Windows spec is not in the Mac source release
-            continue
-        text = (root / spec).read_text()
-        assert '(str(ROOT / "LICENSE"), "legal")' in text and '"legal/licenses"' in text
+    text = (root / "packaging/macos/ENG_Drawing_Viewer_mac.spec").read_text()
+    assert '(str(ROOT / "LICENSE"), "legal")' in text and '"legal/licenses"' in text
+    # Windows: the build script puts "legal" next to the launcher (ui/about.py looks there too).
+    script = root / "packaging/windows/build_windows.ps1"
+    if script.exists():
+        text = script.read_text(encoding="utf-8")
+        assert 'Copy-Item LICENSE "$Dist\\legal\\LICENSE"' in text
+        assert '--out "$Dist\\legal\\licenses"' in text

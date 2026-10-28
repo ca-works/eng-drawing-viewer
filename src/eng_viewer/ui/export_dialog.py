@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from ..core.config import QUALITY_DPI, Settings
 from ..core.exporting import EXPORT_MAX_PIXELS
 from ..core.render_service import PRI_EXPORT, RenderResult, RenderService
-from ..platform import reveal_in_file_manager
+from ..platform import reveal_in_file_manager, reveal_label
 from . import icons
 from .queue_panel import QueueEntry
 from .widgets import ElidedLabel, SegmentedControl, label, primary_button, secondary_button
@@ -235,25 +235,25 @@ class ExportDialog(QDialog):
         eo.addStretch(1)
         dest.addWidget(self.existing_opts)
         self.com_combo = None
+        self.rb_com = None
         if IS_WIN:
-            # Sending slides into an open PowerPoint is being reimplemented for the new Windows
-            # version; until that module exists the option is simply not offered.
-            try:
-                from ..platform.windows_powerpoint import list_open_presentations
-            except ImportError:
-                list_open_presentations = list
-            opened = list_open_presentations()
-            if opened:
-                self.rb_com = QRadioButton("Send to a presentation open in PowerPoint")
-                self.mode_group.addButton(self.rb_com)
-                dest.addWidget(self.rb_com)
-                self.com_combo = QComboBox()
-                for name, full in opened:
-                    self.com_combo.addItem(name, full)
-                c = QHBoxLayout()
-                c.setContentsMargins(24, 0, 0, 0)
-                c.addWidget(self.com_combo, 1)
-                dest.addLayout(c)
+            # Presentations open in PowerPoint are looked up on a worker thread (PowerPoint can take
+            # a while to answer); the option appears only if there are any.
+            from ..platform.windows_powerpoint import PresentationLookup
+
+            self.rb_com = QRadioButton("Send to a presentation open in PowerPoint")
+            self.mode_group.addButton(self.rb_com)
+            dest.addWidget(self.rb_com)
+            self.com_combo = QComboBox()
+            c = QHBoxLayout()
+            c.setContentsMargins(24, 0, 0, 0)
+            c.addWidget(self.com_combo, 1)
+            dest.addLayout(c)
+            self.rb_com.hide()
+            self.com_combo.hide()
+            self._lookup = PresentationLookup()
+            self._lookup.found.connect(self._on_presentations)
+            self._lookup.start()
         grid.addLayout(dest, row, 1)
         row += 1
 
@@ -344,7 +344,7 @@ class ExportDialog(QDialog):
         lay.addWidget(self.done_path)
         lay.addStretch(1)
         b = QHBoxLayout()
-        self.reveal_btn = secondary_button("Show in Finder" if sys.platform == "darwin" else "Show in Explorer" if IS_WIN else "Show in Folder")
+        self.reveal_btn = secondary_button(reveal_label())
         self.reveal_btn.clicked.connect(lambda: reveal_in_file_manager(self.result_path))
         b.addWidget(self.reveal_btn)
         b.addStretch(1)
@@ -357,11 +357,22 @@ class ExportDialog(QDialog):
         lay.addLayout(b)
         return page
 
+    def _on_presentations(self, opened: list):
+        if not opened or self.com_combo is None:
+            return
+        self.com_combo.clear()
+        for name, full in opened:
+            self.com_combo.addItem(name, full)
+            self.com_combo.setItemData(self.com_combo.count() - 1, full, Qt.ItemDataRole.ToolTipRole)
+        self.rb_com.show()
+        self.com_combo.show()
+        self._sync()
+
     # ------------------------------------------------------------ actions
     def _mode(self) -> str:
         if self.rb_existing.isChecked():
             return "existing"
-        if self.com_combo is not None and getattr(self, "rb_com", None) is not None and self.rb_com.isChecked():
+        if self.com_combo is not None and self.rb_com is not None and self.rb_com.isChecked():
             return "powerpoint"
         return "new"
 

@@ -19,7 +19,10 @@ from ..main_window import Toolbar
 from ..page_view import PageRef
 from ..render_helpers import FullPageRender
 from ..theme import IS_MAC
-from ..widgets import ElidedLabel, Toast, label, primary_button, secondary_button, separator, tip, tool_button
+from ..widgets import (
+    ElidedLabel, Toast, assign_mnemonics, key_sequences, label, primary_button, secondary_button, separator, tip,
+    tool_button,
+)
 from .canvas import TOOL_NAMES, TOOLS, MarkCanvas
 from .comments import CommentsPanel
 from .items import ArrowItem, BubbleItem, EllipseItem, StrokeItem, TextItem
@@ -36,14 +39,24 @@ _SPELLER = None
 def get_speller(settings):
     global _SPELLER
     if _SPELLER is None:
-        if IS_MAC and settings.get("spell_backend", "system") == "system":
-            from ...platform.macos import make_speller
+        if settings.get("spell_backend", "system") == "system":
+            if IS_MAC:
+                from ...platform.macos import make_speller
 
-            _SPELLER = make_speller()
+                _SPELLER = make_speller()
+            elif sys.platform == "win32":
+                from ...platform.windows_spell import make_speller
+
+                _SPELLER = make_speller()
         if _SPELLER is None:
             from ...app import resource_path
 
-            _SPELLER = WordListSpeller(resource_path("english_words.txt"), set(settings.get("user_words") or []))
+            def remember(words: list[str]):
+                settings.set("user_words", words)
+                settings.save()
+
+            _SPELLER = WordListSpeller(resource_path("english_words.txt"), set(settings.get("user_words") or []),
+                                       on_learn=remember)
             _SPELLER.preload_async()
     return _SPELLER
 
@@ -119,6 +132,9 @@ class MarkWindow(QMainWindow):
             scr = QGuiApplication.primaryScreen().availableGeometry()
             self.resize(min(1500, int(scr.width() * 0.9)), min(940, int(scr.height() * 0.9)))
         self._prepare_native()
+        from .. import windows_chrome
+
+        windows_chrome.track(self)
 
         self.canvas.set_page(ref, owner.thumbs.get(ref.path, ref.page, 160, visible=False) if owner is not None else None)
         self.canvas.set_tool(self.settings.get("mark_tool", "pen") if self.settings.get("mark_tool", "pen") in TOOLS else "pen")
@@ -292,10 +308,7 @@ class MarkWindow(QMainWindow):
         def act(menu, text, slot, shortcut=None, checkable=False):
             a = QAction(text, self)
             if shortcut is not None:
-                if isinstance(shortcut, (list, tuple)):
-                    a.setShortcuts([QKeySequence(s) for s in shortcut])
-                else:
-                    a.setShortcut(QKeySequence(shortcut))
+                a.setShortcuts(key_sequences(shortcut))
             a.setCheckable(checkable)
             a.triggered.connect(lambda _=False: slot())
             menu.addAction(a)
@@ -310,11 +323,11 @@ class MarkWindow(QMainWindow):
 
         e = mb.addMenu("&Edit")
         self.act_undo = self.canvas.undo_stack.createUndoAction(self, "Undo")
-        self.act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self.act_undo.setShortcuts(key_sequences(QKeySequence.StandardKey.Undo))
         e.addAction(self.act_undo)
         self.act_redo = self.canvas.undo_stack.createRedoAction(self, "Redo")
-        self.act_redo.setShortcuts([QKeySequence(QKeySequence.StandardKey.Redo), QKeySequence("Ctrl+Y")] if not IS_MAC
-                                   else [QKeySequence(QKeySequence.StandardKey.Redo)])
+        # Windows' standard Redo keys already include Ctrl+Y; Ctrl+Shift+Z is added for everyone.
+        self.act_redo.setShortcuts(key_sequences([QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"]))
         e.addAction(self.act_redo)
         e.addSeparator()
         self.act_copy = act(e, "Copy Marked Page", self.copy_marked_page, QKeySequence.StandardKey.Copy)
@@ -347,6 +360,8 @@ class MarkWindow(QMainWindow):
         if IS_MAC:
             w = mb.addMenu("Window")
             act(w, "Minimize", self.showMinimized, "Ctrl+M")
+        else:
+            assign_mnemonics(mb)
 
     # ================================================================ tools
     def set_tool(self, tool: str):
@@ -685,6 +700,11 @@ class MarkWindow(QMainWindow):
 
     # ================================================================ close
     def closeEvent(self, event):
+        if getattr(self, "_closed", False):
+            # A second close request while the window is being deleted (Ctrl+W pressed twice,
+            # the app quitting): everything below has already been done.
+            super().closeEvent(event)
+            return
         if self.canvas.has_markup() and not self.canvas.undo_stack.isClean():
             box = QMessageBox(QMessageBox.Icon.Warning, "Discard this markup?",
                               "Your markup has not been copied, saved or sent to the PowerPoint queue. "
@@ -708,4 +728,5 @@ class MarkWindow(QMainWindow):
         self.canvas.release()
         self.popover.close()
         self.popover.deleteLater()
+        self._closed = True
         super().closeEvent(event)

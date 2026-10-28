@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Account for every file in a built app and gather the licences that apply to it.
+r"""Account for every file in a built app and gather the licences that apply to it.
 
     .venv-build/bin/python tools/collect_licenses.py "release/macos/ENG Drawing Viewer.app" [--sbom out.cdx.json]
+    .venv-build\Scripts\python tools\collect_licenses.py "release\windows\ENG Drawing Viewer" ^
+        --out "release\windows\ENG Drawing Viewer\legal\licenses" [--sbom out.cdx.json]
 
 Run it with the build environment's Python, so it sees the exact packages that were bundled.
 
@@ -10,7 +12,11 @@ installed files (or, for libraries PyInstaller moves, the file name), or to one 
 in CURATED below (the Python runtime, the PyInstaller bootloader, this project). The run fails if
 any shipped file can't be accounted for, so a new dependency can't slip in without its licence.
 
-Output (rewritten each run; commit it, because the app and the source archive ship this folder):
+A Windows build is the application folder (launcher, app\ and legal\). Its licences are written
+with --out into the build itself, because the Windows build ships different native components
+(the Microsoft C++ runtime, pywin32, the Go runtime in the launcher, Tesseract language data).
+
+Output (rewritten each run; for the Mac, commit it, because the app and the source archive ship it):
   licenses/THIRD_PARTY_NOTICES.txt   a readable summary, then every licence text in full
   licenses/components.csv            component, version, licence, files shipped
   licenses/third_party/<component>/  licence files exactly as each package provides them
@@ -85,6 +91,31 @@ def licence_files(dist: md.Distribution) -> list[Path]:
     return sorted(set(found))
 
 
+# Native files on Windows that come from Microsoft's C++ runtime, whichever package carried them.
+MSVC_RUNTIME = re.compile(r"^(vcruntime140(_1)?|msvcp140(_1|_2|_atomic_wait|_codecvt_ids)?|concrt140|vcomp140|"
+                          r"vccorlib140|ucrtbase|api-ms-win-[a-z0-9-]+)\.dll$", re.I)
+MSVC_NOTE = ("Microsoft Visual C++ Runtime (vcruntime/msvcp DLLs). Redistributed unmodified, as permitted by the "
+             "Microsoft Visual Studio licence terms for redistributable code; Python and Qt for Python ship these "
+             "same files with their Windows releases.")
+GO_LICENSE_FALLBACK = "The Go standard library and runtime are under a BSD-3-Clause licence: https://go.dev/LICENSE"
+
+
+def go_license() -> str:
+    """The licence of the Go runtime compiled into the Windows launcher, from the Go toolchain."""
+    import subprocess
+
+    try:
+        goroot = subprocess.run(["go", "env", "GOROOT"], capture_output=True, text=True, timeout=60).stdout.strip()
+        return (Path(goroot) / "LICENSE").read_text(encoding="utf-8")
+    except (OSError, subprocess.SubprocessError):
+        return GO_LICENSE_FALLBACK
+
+
+def app_version() -> str:
+    init = (ROOT / "src" / "eng_viewer" / "__init__.py").read_text(encoding="utf-8")
+    return re.search(r'__version__ = "([^"]+)"', init).group(1)
+
+
 def write_sbom(path: Path, rows: list, app_version: str):
     """A CycloneDX 1.5 software bill of materials listing every bundled component."""
     import json
@@ -100,7 +131,8 @@ def write_sbom(path: Path, rows: list, app_version: str):
             comp["version"] = version
         if lic:
             comp["licenses"] = [{"license": {"name": lic}}]
-        if version and not name.startswith(("CPython", "PyInstaller", "SCOWL", "Qt ", "MuPDF")):
+        if version and not name.startswith(("CPython", "PyInstaller", "SCOWL", "Qt ", "MuPDF", "Go ", "Microsoft",
+                                            "Tesseract")):
             comp["purl"] = f"pkg:pypi/{norm(name)}@{version}"
         components.append(comp)
     doc = {
@@ -115,16 +147,28 @@ def write_sbom(path: Path, rows: list, app_version: str):
 
 
 def main():
+    global LIC, OUT
     args = sys.argv[1:]
     sbom = None
     if "--sbom" in args:
         i = args.index("--sbom")
         sbom = Path(args[i + 1])
         del args[i:i + 2]
+    out_dir = None
+    if "--out" in args:
+        i = args.index("--out")
+        out_dir = Path(args[i + 1]).resolve()
+        del args[i:i + 2]
     if len(args) != 1:
         raise SystemExit(__doc__)
     bundle = Path(args[0]).resolve()
-    contents = bundle / "Contents"
+    windows = not (bundle / "Contents").is_dir()
+    contents = bundle if windows else bundle / "Contents"
+    curated = LIC / "curated"
+    scowl = LIC / "SCOWL.txt"
+    if out_dir is not None:
+        LIC, OUT = out_dir, out_dir / "third_party"
+        LIC.mkdir(parents=True, exist_ok=True)
 
     # Map installed file paths (and bare file names, for relocated libraries) to their package.
     by_path: dict[str, md.Distribution] = {}
@@ -140,19 +184,36 @@ def main():
     unknown: list[str] = []
     stdlib_dynload = Path(sysconfig.get_path("platstdlib")) / "lib-dynload"
     dynload = {p.name for p in stdlib_dynload.glob("*")} if stdlib_dynload.is_dir() else set()
+    if windows:  # CPython's own DLLs and extension modules on Windows
+        base = Path(sys.base_prefix)
+        dynload |= {p.name for p in (base / "DLLs").glob("*")} | {p.name for p in base.glob("*.dll")}
+    extra_texts: list[tuple[str, str]] = []
 
     for path in sorted(p for p in contents.rglob("*") if p.is_file() and not p.is_symlink()):
         rel = path.relative_to(contents).as_posix()
-        inner = rel.split("/", 1)[1] if rel.startswith(("Frameworks/", "Resources/")) else rel
+        if windows:
+            inner = rel[len("app/_internal/"):] if rel.startswith("app/_internal/") else rel
+        else:
+            inner = rel.split("/", 1)[1] if rel.startswith(("Frameworks/", "Resources/")) else rel
         name = path.name
         comp = None
-        if inner.startswith(("eng_viewer/", "legal/")) or rel in ("Info.plist", "Resources/AppIcon.icns") \
+        if windows and (rel in ("ENG Drawing Viewer.exe", "Read Me.txt", "Licence.txt") or rel.startswith("legal/")):
+            comp = "ENG Drawing Viewer (this project)"
+            if rel == "ENG Drawing Viewer.exe":
+                shipped["Go standard library and runtime (in the launcher)"].append(rel)
+        elif windows and rel == "app/ENGDrawingViewer.exe":
+            comp = "PyInstaller bootloader"
+        elif windows and inner.startswith("tessdata/"):
+            comp = "Tesseract language data (tessdata_fast 4.1.0)"
+        elif windows and MSVC_RUNTIME.match(name):
+            comp = "Microsoft Visual C++ Runtime"
+        elif inner.startswith(("eng_viewer/", "legal/")) or rel in ("Info.plist", "Resources/AppIcon.icns") \
                 or rel.startswith("_CodeSignature/") or name == "CodeResources":
             comp = "ENG Drawing Viewer (this project)"
         elif rel == "MacOS/ENG Drawing Viewer":
             comp = "PyInstaller bootloader"
-        elif name in ("libpython3.13.dylib", "base_library.zip") or inner.startswith("python3.13/") \
-                or name in dynload:
+        elif name in ("libpython3.13.dylib", "base_library.zip", "python313.dll", "python3.dll") \
+                or inner.startswith("python3.13/") or name in dynload:
             comp = "CPython 3.13"
         else:
             dist = by_path.get(inner)
@@ -171,7 +232,20 @@ def main():
     # Pure-Python modules are compressed inside the executable rather than shipped as files.
     from PyInstaller.archive.readers import CArchiveReader
     owners = md.packages_distributions()
-    carchive = CArchiveReader(str(contents / "MacOS" / "ENG Drawing Viewer"))
+    # Packages such as pywin32 put their modules on the path through a .pth file, so
+    # packages_distributions() doesn't know them; match them by the files the package installed.
+    by_module: dict[str, md.Distribution] = {}
+    for dist in dists.values():
+        for f in dist.files or []:
+            p = PurePosixPath(str(f))
+            if any(x.endswith((".dist-info", ".egg-info")) or x == ".." for x in p.parts):
+                continue
+            if p.suffix in (".py", ".pyd", ".so"):
+                by_module.setdefault(p.name.split(".")[0], dist)  # module files, e.g. win32/lib/win32con.py
+            for folder in p.parts[:-1]:
+                by_module.setdefault(folder, dist)  # packages and data folders, e.g. pywin32_system32
+    exe = contents / "app" / "ENGDrawingViewer.exe" if windows else contents / "MacOS" / "ENG Drawing Viewer"
+    carchive = CArchiveReader(str(exe))
     for name, entry in carchive.toc.items():
         if entry[-1] != "z":
             continue
@@ -181,6 +255,8 @@ def main():
                 comp = "ENG Drawing Viewer (this project)"
             elif top in owners:
                 comp = dists[norm(owners[top][0])].metadata["Name"]
+            elif top in by_module and top not in sys.stdlib_module_names:
+                comp = by_module[top].metadata["Name"]
             elif top in sys.stdlib_module_names or top.startswith(("_", "pyimod", "pyi_")):
                 comp = "CPython 3.13" if not top.startswith(("pyimod", "pyi_")) else "PyInstaller bootloader"
             else:
@@ -230,21 +306,50 @@ def main():
         elif comp == "PyInstaller bootloader":
             pyi = dists.get("pyinstaller")
             rows.append(["PyInstaller bootloader", pyi.version if pyi else "", "GPL-2.0-or-later WITH Bootloader-exception", 1])
+            if pyi is not None:
+                for lf in licence_files(pyi):
+                    if lf.name.upper().startswith("COPYING"):
+                        extra_texts.append((f"PyInstaller bootloader: {lf.name}", lf.read_text(encoding="utf-8", errors="replace")))
+        elif comp.startswith("Go standard library"):
+            text = go_license()
+            rows.append([comp, "", "BSD-3-Clause", len(files)])
+            target = OUT / "Go"
+            target.mkdir()
+            (target / "LICENSE").write_text(text, encoding="utf-8")
+            texts.append(("Go standard library and runtime: LICENSE", text))
+        elif comp == "Microsoft Visual C++ Runtime":
+            rows.append([comp, "14.x", "Microsoft Visual C++ redistributable", len(files)])
+            target = OUT / "Microsoft Visual C++ Runtime"
+            target.mkdir()
+            (target / "NOTE.txt").write_text(MSVC_NOTE + "\n", encoding="utf-8")
+            texts.append((comp, MSVC_NOTE))
+        elif comp.startswith("Tesseract language data"):
+            rows.append([comp, "4.1.0", "Apache-2.0", len(files)])
+            lic = next((contents / "app" / "_internal" / "tessdata").glob("LICENSE*"), None)
+            if lic is not None:
+                target = OUT / "tessdata_fast"
+                target.mkdir()
+                shutil.copy2(lic, target / "LICENSE")
+                texts.append((f"{comp}: LICENSE", lic.read_text(encoding="utf-8", errors="replace")))
         else:
             rows.append([comp, "", "AGPL-3.0-or-later", len(files)])
 
-    curated = LIC / "curated"
+    texts.extend(extra_texts)
+    if out_dir is not None and curated.is_dir():
+        shutil.rmtree(LIC / "curated", ignore_errors=True)
+        shutil.copytree(curated, LIC / "curated")
     for folder in sorted(p for p in curated.iterdir() if p.is_dir()) if curated.is_dir() else []:
         for f in sorted(folder.rglob("*")):
             if f.is_file():
                 texts.append((f"{folder.name}: {f.relative_to(folder)}", f.read_text(encoding="utf-8", errors="replace")))
-    scowl = LIC / "SCOWL.txt"
     if scowl.is_file():
+        if out_dir is not None:
+            shutil.copy2(scowl, LIC / "SCOWL.txt")
         rows.append(["SCOWL word list", "2020.12.07", "SCOWL licence (permissive)", 1])
         texts.append(("SCOWL word list: SCOWL.txt", scowl.read_text(encoding="utf-8", errors="replace")))
 
     with (LIC / "components.csv").open("w", newline="") as fh:
-        w = csv.writer(fh)
+        w = csv.writer(fh, lineterminator="\n")
         w.writerow(["component", "version", "licence", "files shipped"])
         w.writerows(rows)
 
@@ -262,8 +367,11 @@ def main():
         buf.write("\n\n" + "=" * 72 + f"\n{title}\n" + "=" * 72 + "\n\n" + text.strip() + "\n")
     (LIC / "THIRD_PARTY_NOTICES.txt").write_text(buf.getvalue(), encoding="utf-8")
     if sbom:
-        import plistlib
-        version = plistlib.loads((contents / "Info.plist").read_bytes()).get("CFBundleShortVersionString", "")
+        if windows:
+            version = app_version()
+        else:
+            import plistlib
+            version = plistlib.loads((contents / "Info.plist").read_bytes()).get("CFBundleShortVersionString", "")
         write_sbom(sbom, rows, version)
     total = sum(len(v) for v in shipped.values())
     print(f"Accounted for {total} shipped files in {len(shipped)} components; wrote licenses/.")

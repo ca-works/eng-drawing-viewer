@@ -1,6 +1,6 @@
 """ENG Drawing Viewer — offline viewer, markup and PowerPoint export for engineering PDFs."""
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 APP_NAME = "ENG Drawing Viewer"
 COPYRIGHT = "Copyright © 2026 ca-works"
 LICENSE_NAME = "GNU Affero General Public License v3.0 or later"

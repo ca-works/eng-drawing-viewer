@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.1 — Windows release
+
+ENG Drawing Viewer for Windows 10 and 11 (x64), rebuilt as a standalone app: a portable ZIP and a per-user installer that needs no administrator rights. The Mac app gets the shared fixes below.
+
+### New on Windows
+- A small native launcher shows the splash at once, opens files in the window that is already running, and is what the taskbar pins.
+- Title bars follow the app's light or dark appearance and, on Windows 11, match the toolbar.
+- **Make Searchable (OCR)** works out of the box with bundled Tesseract language data (English, German, French, Italian, Dutch, Portuguese, Spanish).
+- **HEIC photos** open through Windows' own decoder once the free HEIF and HEVC extensions from the Microsoft Store are installed; the app says so if they're missing.
+- **Spelling** uses Windows' spelling dictionaries and remembers the words you add (or the built-in English dictionary).
+- **Send to an open presentation**: slides can go straight into a presentation open in PowerPoint.
+- Windows shortcuts: Ctrl+, (Settings), F5 (Rescan), F1 (Keyboard Shortcuts), Exit, Alt-key menu mnemonics, and no Ctrl+Alt shortcuts (they clash with AltGr).
+- Open drawings are no longer locked: you can rename, move or replace a PDF while it's shown.
+- Show in Explorer selects the file. Folders on FAT/exFAT and network drives, hidden and system folders are scanned correctly.
+
+### Fixed (all platforms)
+- Words added with *Learn Spelling* in the built-in dictionary are kept after restarting.
+- Redo no longer lists the same key twice (which could disable it).
+- The Organizer's Undo/Redo tooltips show this computer's keys.
+- Closing a MARK window twice in quick succession is harmless.
+
 ## 2.2.0 — first public release
 
 ENG Drawing Viewer is now free and open-source software under the GNU AGPL v3 or later.

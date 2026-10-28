@@ -3,7 +3,9 @@
 PDFs and images are both "documents": an image is a one-page document (a
 multi-page TIFF has several pages). MuPDF reads PNG, JPEG, TIFF, BMP and GIF
 directly; WebP is decoded with Pillow, and HEIC/HEIF (iPhone photos) with
-Apple's ImageIO on macOS. Files are only ever read.
+Apple's ImageIO on macOS and the Windows Imaging Component on Windows. Files are
+only ever read. On Windows, documents are read into memory before MuPDF opens
+them, so an open drawing never stops the user renaming, moving or replacing it.
 """
 from __future__ import annotations
 
@@ -40,9 +42,13 @@ def is_document_name(name: str, include_images: bool = True) -> bool:
 
 
 def heic_to_png(path: str) -> bytes:
-    """Decode HEIC/HEIF with ImageIO, upright (EXIF orientation applied)."""
+    """Decode HEIC/HEIF with the system's decoder, upright (EXIF orientation applied)."""
+    if sys.platform == "win32":
+        from ..platform.windows_heic import heic_to_png as windows_heic_to_png
+
+        return windows_heic_to_png(path)
     if sys.platform != "darwin":
-        raise ValueError("HEIC images can only be opened on macOS")
+        raise ValueError("HEIC images can only be opened on macOS and Windows")
     import Quartz
     from Foundation import NSURL, NSMutableData
 
@@ -93,6 +99,10 @@ def image_pixels(path: str) -> tuple[int, int] | None:
             return (h, w) if int(props.get("Orientation", 1)) in (5, 6, 7, 8) else (w, h)
         except Exception:
             return None
+    if extension(path) in (".heic", ".heif") and sys.platform == "win32":
+        from ..platform.windows_heic import heic_size
+
+        return heic_size(path)  # raises ValueError with what to install if Windows can't read HEIF
     try:
         from PIL import Image
 
@@ -110,6 +120,19 @@ def image_pixels(path: str) -> tuple[int, int] | None:
         return None
 
 
+# Windows locks a file while a program holds it open; MuPDF keeps documents open while they are
+# shown, and render workers cache them. Reading the bytes first leaves the file free.
+READ_INTO_MEMORY = sys.platform == "win32"
+
+
+def _read(path: str) -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except PermissionError:
+        raise ValueError("Could not read the file. Another program may be using it.") from None
+
+
 def open_document(pymupdf, path: str):
     """Open a PDF or image read-only, with short, friendly error messages."""
     kind = kind_for(path) or "pdf"
@@ -118,12 +141,17 @@ def open_document(pymupdf, path: str):
         if pixels:
             check_pixels(*pixels)
     try:
-        if kind == "pdf":
+        if kind == "pdf" and READ_INTO_MEMORY:
+            doc = pymupdf.open(stream=_read(path), filetype="pdf")
+        elif kind == "pdf":
             doc = pymupdf.open(path, filetype="pdf")
         elif extension(path) in (".heic", ".heif"):
             doc = pymupdf.open(stream=heic_to_png(path), filetype="png")
         elif extension(path) == ".webp":
             doc = pymupdf.open(stream=_webp_to_png(path), filetype="png")
+        elif READ_INTO_MEMORY:
+            ext = extension(path).lstrip(".")
+            doc = pymupdf.open(stream=_read(path), filetype={"jpe": "jpeg"}.get(ext, ext))
         else:
             doc = pymupdf.open(path)
     except ValueError as exc:

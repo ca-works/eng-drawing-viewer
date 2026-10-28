@@ -29,11 +29,13 @@ from .page_view import PageRef, PageView
 from .pages_panel import PagesPanel
 from .queue_panel import QueueEntry, QueuePanel
 from .render_helpers import FullPageRender
+from .shortcuts import KEYS
 from .theme import IS_MAC, ThemeManager
 from .thumbnails import ThumbnailProvider
 from .widgets import (
     SegmentedControl,
-    ElidedLabel, EmptyState, Spinner, Toast, label, primary_button, secondary_button, separator, tip, tool_button,
+    ElidedLabel, EmptyState, Spinner, Toast, assign_mnemonics, key_sequences, label, primary_button, secondary_button,
+    separator, tip, tool_button,
 )
 
 ZOOM_PRESETS = [25, 50, 75, 100, 125, 150, 200, 300, 400, 800, 1600]
@@ -294,7 +296,7 @@ class MainWindow(QMainWindow):
         self._toolbar_layout = lay
         lay.setContentsMargins(10, 0, 10, 0)
         lay.setSpacing(4)
-        self.btn_library = tool_button("sidebar-left", tip("Show Library", "Ctrl+Alt+1"), checkable=True)
+        self.btn_library = tool_button("sidebar-left", tip("Show Library", KEYS["library"]), checkable=True)
         self.btn_library.setChecked(True)
         self.btn_library.toggled.connect(self._toggle_library)
         lay.addWidget(self.btn_library)
@@ -382,7 +384,7 @@ class MainWindow(QMainWindow):
         self.btn_mark.clicked.connect(self.open_mark)
         vl.addWidget(self.btn_mark)
         vl.addSpacing(4)
-        self.btn_inspector = tool_button("sidebar-right", tip("Show Inspector", "Ctrl+Alt+2"), checkable=True)
+        self.btn_inspector = tool_button("sidebar-right", tip("Show Inspector", KEYS["inspector"]), checkable=True)
         self.btn_inspector.setChecked(True)
         self.btn_inspector.toggled.connect(self._toggle_inspector)
         vl.addWidget(self.btn_inspector)
@@ -436,10 +438,7 @@ class MainWindow(QMainWindow):
     def _act(self, menu: QMenu, text: str, slot, shortcut=None, icon_name: str | None = None, checkable=False) -> QAction:
         a = QAction(text, self)
         if shortcut is not None:
-            if isinstance(shortcut, (list, tuple)):
-                a.setShortcuts([QKeySequence(s) if isinstance(s, str) else QKeySequence(s) for s in shortcut])
-            else:
-                a.setShortcut(QKeySequence(shortcut))
+            a.setShortcuts(key_sequences(shortcut))
         if icon_name and not IS_MAC:
             a.setIcon(icons.icon(icon_name, role="text"))
         a.setCheckable(checkable)
@@ -460,7 +459,7 @@ class MainWindow(QMainWindow):
         self.recent_menu = f.addMenu("Open Recent")
         self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         f.addSeparator()
-        self.act_rescan = self._act(f, "Rescan Folder", self.rescan, "Ctrl+R", "refresh")
+        self.act_rescan = self._act(f, "Rescan Folder", self.rescan, KEYS["rescan"], "refresh")
         self.act_reveal = self._act(f, reveal_label(), lambda: reveal_in_file_manager(self.doc_path), "Ctrl+Shift+R", "reveal")
         f.addSeparator()
         self.act_save_png = self._act(f, "Save Page as PNG…", self.save_page_png, "Ctrl+Shift+S", "save")
@@ -468,9 +467,9 @@ class MainWindow(QMainWindow):
         self._act(f, "Export Queue as PDF…", self.export_queue_pdf, "Ctrl+Shift+E", "save")
         f.addSeparator()
         self._act(f, "Close Window", self.close, QKeySequence.StandardKey.Close)
-        prefs = self._act(f, "Settings…", self.show_preferences, QKeySequence.StandardKey.Preferences, "settings")
+        prefs = self._act(f, "Settings…", self.show_preferences, KEYS["settings"], "settings")
         prefs.setMenuRole(QAction.MenuRole.PreferencesRole)
-        quit_act = self._act(f, "Quit", QApplication.quit, QKeySequence.StandardKey.Quit)
+        quit_act = self._act(f, "Quit" if IS_MAC else "E&xit", QApplication.quit, KEYS["quit"])
         quit_act.setMenuRole(QAction.MenuRole.QuitRole)
 
         e = mb.addMenu("&Edit")
@@ -481,8 +480,8 @@ class MainWindow(QMainWindow):
 
         v = mb.addMenu("&View")
         mg = QActionGroup(self)
-        self.act_mode_viewer = self._act(v, "Viewer", lambda: self.set_mode("viewer"), "Ctrl+Alt+V", checkable=False)
-        self.act_mode_tools = self._act(v, "PDF Tools", lambda: self.set_mode("tools"), "Ctrl+Alt+T", checkable=False)
+        self.act_mode_viewer = self._act(v, "Viewer", lambda: self.set_mode("viewer"), KEYS["viewer"], checkable=False)
+        self.act_mode_tools = self._act(v, "PDF Tools", lambda: self.set_mode("tools"), KEYS["tools"], checkable=False)
         for a in (self.act_mode_viewer, self.act_mode_tools):
             a.setCheckable(True)
             mg.addAction(a)
@@ -494,8 +493,8 @@ class MainWindow(QMainWindow):
         self.act_fit_width = self._act(v, "Fit Width", self.view.fit_width, "Ctrl+1", "fit-width")
         self.act_fit_page = self._act(v, "Fit Page", self.view.fit_page, "Ctrl+2", "fit-page")
         v.addSeparator()
-        self.act_show_library = self._act(v, "Show Library", self.btn_library.setChecked, "Ctrl+Alt+1", checkable=True)
-        self.act_show_inspector = self._act(v, "Show Inspector", self.btn_inspector.setChecked, "Ctrl+Alt+2", checkable=True)
+        self.act_show_library = self._act(v, "Show Library", self.btn_library.setChecked, KEYS["library"], checkable=True)
+        self.act_show_inspector = self._act(v, "Show Inspector", self.btn_inspector.setChecked, KEYS["inspector"], checkable=True)
         self.act_show_library.setChecked(True)
         self.act_show_inspector.setChecked(True)
         lm = v.addMenu("Library")
@@ -560,9 +559,11 @@ class MainWindow(QMainWindow):
             self._act(w, "Minimize", self.showMinimized, "Ctrl+M")
             self._act(w, "Zoom", lambda: self.showNormal() if self.isMaximized() else self.showMaximized())
         h = mb.addMenu("&Help")
-        self._act(h, "Keyboard Shortcuts", self.show_shortcuts, "Ctrl+/", "keyboard")
+        self._act(h, "Keyboard Shortcuts", self.show_shortcuts, KEYS["shortcuts"], "keyboard")
         about = self._act(h, f"About {APP_NAME}", self.show_about, None, "info")
         about.setMenuRole(QAction.MenuRole.AboutRole)
+        if not IS_MAC:
+            assign_mnemonics(mb)
 
     # ======================================================== state restore
     def _restore_state(self):
@@ -1200,14 +1201,14 @@ class MainWindow(QMainWindow):
         self.act_show_library.blockSignals(True)
         self.act_show_library.setChecked(on)
         self.act_show_library.blockSignals(False)
-        self.btn_library.setToolTip(tip("Hide Library" if on else "Show Library", "Ctrl+Alt+1"))
+        self.btn_library.setToolTip(tip("Hide Library" if on else "Show Library", KEYS["library"]))
 
     def _toggle_inspector(self, on: bool):
         self.inspector.setVisible(on)
         self.act_show_inspector.blockSignals(True)
         self.act_show_inspector.setChecked(on)
         self.act_show_inspector.blockSignals(False)
-        self.btn_inspector.setToolTip(tip("Hide Inspector" if on else "Show Inspector", "Ctrl+Alt+2"))
+        self.btn_inspector.setToolTip(tip("Hide Inspector" if on else "Show Inspector", KEYS["inspector"]))
 
     def _toggle_fullscreen(self):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()

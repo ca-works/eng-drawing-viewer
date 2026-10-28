@@ -59,6 +59,31 @@ python tools/build_wordlist.py scowl-2020.12.07.tar.gz
 
 The script checks the archive's SHA-256 and writes the word list and `licenses/SCOWL.txt`.
 
-## Windows
+## Windows (x64)
 
-The Windows version is being rebuilt. The files in `packaging/windows/` are not yet used for releases.
+Requirements: Windows 10 or 11 (x64), [uv](https://docs.astral.sh/uv/), [Go](https://go.dev/dl/) 1.26 or later for the launcher, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the optional installer.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1 -Installer
+```
+
+The script:
+
+1. creates `.venv-build` with CPython 3.13.16 (downloaded and checksum-verified by uv) and installs the exact packages in `packaging/requirements-windows.txt`, each checked against its SHA-256 hash;
+2. downloads the Tesseract language data for text recognition (`tools/fetch_tessdata.py`, hash-checked);
+3. builds the launcher (`packaging/windows/launcher`, Go, no third-party modules) with `-trimpath`; its icon, version information and manifest come from `packaging/windows/make_resources.py`;
+4. runs PyInstaller with `packaging/windows/ENG_Drawing_Viewer_win.spec`, collects the licence texts and a CycloneDX SBOM (`tools/collect_licenses.py`), runs a smoke test through the launcher and checks the result with `tools/check_bundle.py`;
+5. writes the application folder, `ENG-Drawing-Viewer-<version>-Windows-x64-Portable.zip` and, with `-Installer`, `ENG-Drawing-Viewer-<version>-Windows-x64-Setup.exe` (a per-user installer that needs no administrator rights) to `release\windows\`.
+
+The application folder holds `ENG Drawing Viewer.exe` (the launcher users start), `app\` (the application) and `legal\` (the licence texts). The launcher shows the splash, hands files to a copy that is already running, and starts the application with absolute file paths.
+
+`tools\build_from_archive.ps1 eng-drawing-viewer-<version>-source.zip` builds the same way from a published source archive.
+
+To change dependencies, edit `packaging/requirements-windows.in` and regenerate the lock file:
+
+```bash
+uv pip compile packaging/requirements-windows.in --python-version 3.13 \
+  --python-platform x86_64-pc-windows-msvc --generate-hashes -o packaging/requirements-windows.txt
+```
+
+`.github/workflows/windows.yml` builds and checks the app on clean Windows Server 2022 and 2025 runners: the tests with the real Windows platform plugin, the packaged app with no Python on the PATH, the folders every loaded DLL comes from, network activity, a scripted UI pass with screenshots, the installer, and a build from the source archive.

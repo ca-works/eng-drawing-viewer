@@ -24,11 +24,27 @@ def find_office() -> str | None:
     return None
 
 
+def tessdata_dir() -> str | None:
+    """Folder of the bundled Tesseract language data (PyMuPDF's MuPDF includes Tesseract itself).
+
+    Builds bundle it as ``tessdata`` next to the app's other files; ``ENG_VIEWER_TESSDATA`` points
+    at a copy when running from source (``tools/fetch_tessdata.py`` downloads it).
+    """
+    candidates = [os.environ.get("ENG_VIEWER_TESSDATA")]
+    frozen = getattr(sys, "_MEIPASS", None)
+    if frozen:
+        candidates.append(os.path.join(frozen, "tessdata"))
+    for c in candidates:
+        if c and os.path.isfile(os.path.join(c, "eng.traineddata")):
+            return c
+    return None
+
+
 def ocr_available() -> str | None:
-    """'vision' (macOS), 'tesseract' (if installed) or None."""
+    """'vision' (macOS), 'tesseract' (bundled language data or installed Tesseract) or None."""
     if sys.platform == "darwin" and importlib.util.find_spec("Vision") is not None:
         return "vision"
-    if shutil.which("tesseract"):
+    if tessdata_dir() or shutil.which("tesseract"):
         return "tesseract"
     return None
 

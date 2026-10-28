@@ -365,8 +365,20 @@ class ThemeManager(QObject):
 
 def configure_app_font(app: QApplication) -> None:
     if IS_WIN:
-        font = QFont("Segoe UI Variable Text")
-        if not font.exactMatch():
-            font = QFont("Segoe UI")
-        font.setPointSizeF(9.5)
-        app.setFont(font)
+        app.setFont(windows_ui_font())
+
+
+# Windows 11's interface font is Segoe UI Variable (its "Text" optical size for body text);
+# Windows 10 has Segoe UI. Font databases list the variable font either by its named instances or
+# by its family name, so look for each.
+WINDOWS_FONTS = ("Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI")
+
+
+def windows_ui_font() -> QFont:
+    from PySide6.QtGui import QFontDatabase
+
+    families = set(QFontDatabase.families())
+    family = next((f for f in WINDOWS_FONTS if f in families), "Segoe UI")
+    font = QFont(family)
+    font.setPointSizeF(9.5)
+    return font

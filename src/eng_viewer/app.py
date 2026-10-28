@@ -82,17 +82,30 @@ def main(argv: list[str] | None = None) -> int:
                 return True
             return super().event(e)
 
+    smoke = os.environ.get("ENG_VIEWER_SMOKE_TEST") == "1"
+    cli_paths = [Path(a) for a in argv[1:] if not a.startswith("-") and Path(a).exists()]
     if sys.platform == "win32":
-        from .platform.windows import set_app_user_model_id
+        from .platform import windows
 
-        set_app_user_model_id()
+        windows.set_app_user_model_id()
+        # Started directly rather than through the launcher (which checks this itself): hand the
+        # files to a running copy instead of opening a second one.
+        if not smoke and not windows.started_by_launcher() and windows.forward_to_running_instance([str(p) for p in cli_paths]):
+            return 0
     app = EngApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setApplicationVersion(__version__)
     if sys.platform != "darwin":
         app.setApplicationDisplayName(APP_NAME)
-        app.setStyle("Fusion")
+        # The app's stylesheet draws most of the interface. Underneath it, Windows uses Qt's
+        # "windows11" style (native Fluent check boxes, menus and scroll bars; compared with Fusion
+        # on Windows Server 2022 and 2025 screenshots), and other systems Fusion.
+        # ENG_VIEWER_STYLE picks another Qt style, for side-by-side comparisons.
+        from PySide6.QtWidgets import QStyleFactory
+
+        default = "windows11" if sys.platform == "win32" and "windows11" in QStyleFactory.keys() else "Fusion"
+        app.setStyle(os.environ.get("ENG_VIEWER_STYLE") or default)
     mark("QApplication")
 
     from .core.config import Settings
@@ -111,7 +124,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from .ui.splash import Splash
 
-    splash = Splash(app_icon, stages=3, started=_T0)
+    # The Windows launcher already shows a splash; never show a second one.
+    splash = Splash(app_icon, stages=3, started=_T0,
+                    enabled=not (sys.platform == "win32" and windows.started_by_launcher()))
     splash.stage("Starting the PDF renderer…")
     from .core.render_service import RenderService
 
@@ -134,19 +149,41 @@ def main(argv: list[str] | None = None) -> int:
     splash.finish()
     mark("window shown")
 
+    receiver = None
     if sys.platform == "win32":
-        from .platform.windows import signal_launcher_ready
+        from .ui import windows_chrome
 
-        signal_launcher_ready()
+        windows_chrome.track(window)
+        windows.set_relaunch_properties(window)
 
-    cli_paths = [Path(a) for a in argv[1:] if not a.startswith("-") and Path(a).exists()]
+        def bring_forward(paths: list[str]):
+            if window.isMinimized():
+                window.showNormal()
+            window.raise_()
+            window.activateWindow()
+            if paths:
+                window.route_dropped([Path(p) for p in paths])
 
-    smoke = os.environ.get("ENG_VIEWER_SMOKE_TEST") == "1"
+        if not smoke:
+            try:
+                receiver = windows.InstanceReceiver(bring_forward)
+            except OSError:
+                receiver = None
+        windows.signal_launcher_ready()
+
     exit_code = {"value": 0}
+
+    def say(text: str):
+        # A windowed Windows program may have no console; smoke tests can also ask for a file.
+        print(text, flush=True)
+        log = os.environ.get("ENG_VIEWER_SMOKE_LOG")
+        if smoke and log:
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(text + "\n")
 
     def report():
         for name, t in marks:
-            print(f"[startup] {t * 1000:7.1f} ms  {name}", flush=True)
+            say(f"[startup] {t * 1000:7.1f} ms  {name}")
 
     if smoke:
         # Packaging check: open the PDF given on the command line, wait until the
@@ -165,6 +202,12 @@ def main(argv: list[str] | None = None) -> int:
                 QTimer.singleShot(200, app.quit)
                 return
             tmp = Path(tempfile.mkdtemp(prefix="eng-smoke-"))
+            import hashlib
+            import secrets
+
+            # Hashing and random passwords must work without OpenSSL (the Windows build has none).
+            hashlib.sha256(b"smoke").hexdigest()
+            secrets.token_hex(8)
             jobs = [{"op": "to_word", "path": window.doc_path, "output": str(tmp / "out.docx")},
                     {"op": "to_excel", "path": window.doc_path, "output": str(tmp / "out.xlsx")},
                     {"op": "compress", "path": window.doc_path, "output": str(tmp / "out.pdf")}]
@@ -177,17 +220,17 @@ def main(argv: list[str] | None = None) -> int:
                 failed = [r.error for r in results if not r.ok]
                 shutil.rmtree(tmp, ignore_errors=True)
                 if failed:
-                    print(f"[smoke] FAILED: PDF tool job: {failed[0]}", flush=True)
+                    say(f"[smoke] FAILED: PDF tool job: {failed[0]}")
                     exit_code["value"] = 4
                 else:
-                    print(f"[smoke] {len(jobs)} PDF tool jobs OK (Word, Excel, compress)", flush=True)
+                    say(f"[smoke] {len(jobs)} PDF tool jobs OK (Word, Excel, compress)")
                 QTimer.singleShot(200, app.quit)
 
             for job in jobs:
                 render.submit("tool", job, done, dedupe=False)
 
         def timeout():
-            print("[smoke] FAILED: no page rendered within 30 s", flush=True)
+            say("[smoke] FAILED: no page rendered within 30 s")
             exit_code["value"] = 3
             app.quit()
 
@@ -210,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         code = app.exec()
     finally:
+        if receiver is not None:
+            receiver.close()
         render.shutdown()
     return exit_code["value"] or code
 

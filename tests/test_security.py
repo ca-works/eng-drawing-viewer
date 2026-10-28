@@ -76,7 +76,21 @@ except PermissionError:
     pass
 else:
     raise AssertionError('network permitted')
-a, b = socket.socketpair()
+import sys
+if sys.platform == 'win32':
+    # On Windows socketpair() is a loopback TCP connection and is blocked like any socket; nothing
+    # in the app uses it. The app's own inter-process channels are named pipes, which still work.
+    try:
+        socket.socketpair()
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError('loopback socket permitted')
+    from multiprocessing import Pipe
+    a, b = Pipe()
+    a.send('ok'); assert b.recv() == 'ok'
+else:
+    a, b = socket.socketpair()
 a.close(); b.close()
 """
     subprocess.run([sys.executable, '-c', code], check=True, timeout=15)
@@ -192,3 +206,13 @@ def test_pdf_to_images_lowers_dpi_for_huge_pages(tmp_path):
     pix = pymupdf.Pixmap(result['outputs'][0])
     assert pix.width * pix.height <= MAX_PIXELS
     assert pix.width > 9933  # still above 300 DPI
+
+
+def test_export_keeps_licence_files_without_extensions():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('exporter_names', Path(__file__).parents[1] / 'tools/export_public_source.py')
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for name in ['licenses/curated/MuPDF/thirdparty__brotli__LICENSE', 'licenses/curated/libiconv/COPYING.LIB',
+                 'licenses/curated/MuPDF/COPYING', '.gitattributes']:
+        assert mod.allowed(name), name

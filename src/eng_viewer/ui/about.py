@@ -23,10 +23,16 @@ NOTICE = (
 
 
 def legal_dir() -> Path:
-    """LICENSE and licenses/ ship in a 'legal' folder in builds, and at the repository root in source."""
+    """LICENSE and licenses/ ship in a 'legal' folder in builds, and at the repository root in source.
+
+    In the Mac app it is inside the bundle; on Windows it sits next to the launcher, where people
+    can also read it without starting the app (the application itself is in the "app" folder).
+    """
     frozen = getattr(sys, "_MEIPASS", None)
-    if frozen and (Path(frozen) / "legal").is_dir():
-        return Path(frozen) / "legal"
+    if frozen:
+        for folder in (Path(frozen) / "legal", Path(sys.executable).resolve().parent.parent / "legal"):
+            if folder.is_dir():
+                return folder
     return Path(__file__).resolve().parents[3]
 
 

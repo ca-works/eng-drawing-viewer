@@ -3,6 +3,10 @@
 
 No publishing. External gitleaks and exiftool must be installed. A successful
 export is evidence for review, never permission to release.
+
+``--unscanned`` writes the same archive without the privacy scans, for CI machines
+that check the build from an archive but don't hold the private terms. Its
+SOURCE_MANIFEST.txt must match the scanned export's before either is trusted.
 """
 from __future__ import annotations
 
@@ -16,12 +20,13 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-ROOT_FILES = {'LICENSE', 'README.md', 'CHANGELOG.md', 'pyproject.toml'}
+ROOT_FILES = {'LICENSE', 'README.md', 'CHANGELOG.md', 'pyproject.toml', '.gitattributes'}
 DOCS = {'docs/INSTALL.md', 'docs/BUILDING.md', 'docs/PDF_TOOLS.md'}
 TOOLS = {'tools/export_public_source.py', 'tools/collect_licenses.py', 'tools/build_wordlist.py',
          'tools/check_bundle.py', 'tools/benchmark.py', 'tools/build_from_archive.sh',
          'tools/compare_builds.py', 'tools/fetch_third_party_sources.py',
-         'tools/publish_release.sh', 'tools/curate_licenses.py'}
+         'tools/publish_release.sh', 'tools/curate_licenses.py', 'tools/fetch_tessdata.py',
+         'tools/build_from_archive.ps1'}
 DENIED = {'audit', 'reference', '.git', '.github', 'build', 'dist', 'release', '.venv', '__pycache__'}
 BINARY_SUFFIXES = {'.exe', '.dll', '.dylib', '.so', '.pyc', '.zip', '.dmg', '.pdf'}
 # Patterns are assembled so this scanner can itself be exported without exemptions.
@@ -40,15 +45,15 @@ def allowed(name):
     p = PurePosixPath(name)
     if p.is_absolute() or '..' in p.parts or any(x in DENIED for x in p.parts):
         return False
-    # The Windows version is being rebuilt independently and is not part of this release.
-    if name.startswith('packaging/windows/') or name == 'packaging/requirements-windows.txt':
-        return False
     if p.suffix.lower() in BINARY_SUFFIXES:
         return False
     return (name in ROOT_FILES or name in DOCS or name in TOOLS or name == 'assets/app_icon_1024.png'
             or (name.startswith('docs/images/') and p.suffix.lower() == '.png')
+            # Licence texts keep their upstream names, often without an extension (COPYING, LICENSE).
+            or p.parts[0] == 'licenses'
             or (p.parts[0] in {'src', 'tests', 'packaging', 'licenses'}
-                and p.suffix.lower() in {'.py', '.toml', '.txt', '.md', '.sh', '.ps1', '.bat', '.spec', '.go', '.mod', '.svg', '.png', '.ico', '.icns', '.in'}))
+                and p.suffix.lower() in {'.py', '.toml', '.txt', '.md', '.sh', '.ps1', '.bat', '.spec', '.go', '.mod', '.svg', '.png', '.ico', '.icns', '.in',
+                                         '.iss', '.manifest'}))
 
 
 def load_private_terms(path):
@@ -95,8 +100,8 @@ def git(root, *args):
     return subprocess.check_output(['git', '-C', str(root), *args])
 
 
-def export(root, revision, output):
-    if not shutil.which('gitleaks') or not shutil.which('exiftool'):
+def export(root, revision, output, scan_tools=True):
+    if scan_tools and (not shutil.which('gitleaks') or not shutil.which('exiftool')):
         raise RuntimeError('gitleaks and exiftool are required; no archive produced.')
     commit = git(root, 'rev-parse', '--verify', revision + '^{commit}').decode().strip()
     entries = []
@@ -112,7 +117,8 @@ def export(root, revision, output):
         if mode not in {'100644', '100755'} or kind != 'blob':
             raise ValueError(f'Unsupported file type: {name}')
         data = git(root, 'cat-file', 'blob', oid)
-        problems.extend(findings(name, data))
+        if scan_tools:
+            problems.extend(findings(name, data))
         entries.append((name, data, mode))
     if problems:
         raise ValueError('Blocked content; review privately:\n  ' + '\n  '.join(problems))
@@ -124,8 +130,9 @@ def export(root, revision, output):
             dest = staging / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
-        subprocess.run(['gitleaks', 'dir', '--redact', '--no-banner', str(staging)], check=True)
-        meta = json.loads(subprocess.check_output(['exiftool', '-json', '-r', str(staging)]))
+        if scan_tools:
+            subprocess.run(['gitleaks', 'dir', '--redact', '--no-banner', str(staging)], check=True)
+        meta = json.loads(subprocess.check_output(['exiftool', '-json', '-r', str(staging)])) if scan_tools else []
         forbidden = {'Artist', 'Author', 'Creator', 'OwnerName', 'GPSLatitude', 'GPSLongitude', 'Comment', 'Description', 'Copyright'}
         for item in meta:
             if any(k in item and item[k] for k in forbidden):
@@ -162,6 +169,9 @@ if __name__ == '__main__':
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--private-terms', type=Path, default=Path(__file__).resolve().parents[1] / 'audit' / 'private-terms.txt',
                         help='File of owner-specific terms that must not appear (kept out of the repository)')
+    parser.add_argument('--unscanned', action='store_true',
+                        help='Skip the privacy scans (CI reproducibility checks only; never for release)')
     args = parser.parse_args()
-    PRIVATE[:] = load_private_terms(args.private_terms)
-    print(export(args.root, args.revision, args.output))
+    if not args.unscanned:
+        PRIVATE[:] = load_private_terms(args.private_terms)
+    print(export(args.root, args.revision, args.output, scan_tools=not args.unscanned))

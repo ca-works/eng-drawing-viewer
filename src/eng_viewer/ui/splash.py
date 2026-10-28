@@ -17,7 +17,7 @@ from .theme import ThemeManager, qc
 class Splash(QWidget):
     SHOW_AFTER = 0.30  # seconds of startup before the splash is worth showing
 
-    def __init__(self, icon: QPixmap | None, stages: int, started: float):
+    def __init__(self, icon: QPixmap | None, stages: int, started: float, enabled: bool = True):
         super().__init__(None, Qt.WindowType.SplashScreen | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -26,6 +26,7 @@ class Splash(QWidget):
         self._done = 0
         self._text = "Starting…"
         self._started = started
+        self._enabled = enabled
         self.resize(380, 236)
         scr = QGuiApplication.primaryScreen().availableGeometry()
         self.move(scr.center().x() - self.width() // 2, scr.center().y() - self.height() // 2 - 40)
@@ -33,7 +34,7 @@ class Splash(QWidget):
     def stage(self, text: str):
         """Begin a named stage; shows the splash once startup is visibly slow."""
         self._text = text
-        if not self.isVisible() and time.perf_counter() - self._started >= self.SHOW_AFTER:
+        if self._enabled and not self.isVisible() and time.perf_counter() - self._started >= self.SHOW_AFTER:
             self.show()
         if self.isVisible():
             self.repaint()

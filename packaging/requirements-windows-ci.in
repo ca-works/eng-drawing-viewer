@@ -1,0 +1,5 @@
+# Test-only tools for the Windows CI user-interface pass (never bundled into the app).
+#   uv pip compile packaging/requirements-windows-ci.in --python-version 3.13 \
+#     --python-platform x86_64-pc-windows-msvc --generate-hashes -o packaging/requirements-windows-ci.txt
+-c requirements-windows.txt
+pywinauto==0.6.9

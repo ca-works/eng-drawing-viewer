@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import itertools
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from ...core.documents import IMAGE_EXTS
 from ...core.tool_support import unique_path
 from ...core.render_service import PRI_EXPORT, RenderResult
 from ..theme import ThemeManager, qc
-from ..widgets import label, primary_button, secondary_button, separator, tool_button
+from ..widgets import label, primary_button, secondary_button, separator, tip, tool_button
 from .common import Card, ResultCard, file_filter, local_paths
 
 ACCEPTS = frozenset({".pdf"}) | IMAGE_EXTS
@@ -44,7 +45,11 @@ class OrganizerModel(QAbstractListModel):
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             if it["blank"]:
                 return "Blank page"
-            return f"{Path(it['path']).name} — page {it['page'] + 1}" + (f" (rotated {it['rotate']}°)" if it["rotate"] else "")
+            text = f"{Path(it['path']).name} — page {it['page'] + 1}" + (f" (rotated {it['rotate']}°)" if it["rotate"] else "")
+            if role == Qt.ItemDataRole.ToolTipRole:
+                # The full path tells apart same-named drawings from different folders.
+                return f"{text}\n{os.path.normpath(it['path'])}"
+            return text
         return None
 
     def flags(self, index):
@@ -252,7 +257,8 @@ class OrganizerPanel(QWidget):
         cur.clicked.connect(lambda: host.current_document() and self.add_files([host.current_document()]))
         bar.addWidget(cur)
         bar.addWidget(separator(True))
-        for icon, tipx, fn in (("undo", "Undo (⌘Z)", self.undo.undo), ("redo", "Redo", self.undo.redo),
+        for icon, tipx, fn in (("undo", tip("Undo", QKeySequence.StandardKey.Undo), self.undo.undo),
+                               ("redo", tip("Redo", QKeySequence.StandardKey.Redo), self.undo.redo),
                                ("rotate-page", "Rotate right (R)", lambda: self.rotate(90)),
                                ("refresh", "Rotate left (Shift+R)", lambda: self.rotate(-90)),
                                ("copy", "Duplicate", self.duplicate), ("file", "Insert blank page", self.insert_blank),

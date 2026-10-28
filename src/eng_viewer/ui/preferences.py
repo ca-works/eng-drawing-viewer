@@ -7,9 +7,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
+from .shortcuts import KEYS, MARK_PAGE
 from .widgets import SegmentedControl, label, primary_button, secondary_button, shortcut_text
 
 IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform == "win32"
+
+
+def _keys(spec) -> str:
+    items = spec if isinstance(spec, list) else [spec]
+    return " / ".join(shortcut_text(k) if isinstance(k, QKeySequence.StandardKey) else k for k in items)
 
 
 class PreferencesDialog(QDialog):
@@ -77,9 +84,11 @@ class PreferencesDialog(QDialog):
         grid.addLayout(lib, r, 1)
         r += 1
 
-        if IS_MAC:
+        if IS_MAC or IS_WIN:
             grid.addWidget(label("Spelling", "secondary"), r, 0, Qt.AlignmentFlag.AlignRight)
-            self.spell = SegmentedControl([("system", "macOS spelling", None, "Uses your Mac's languages and learned words"),
+            system = (("system", "macOS spelling", None, "Uses your Mac's languages and learned words") if IS_MAC else
+                      ("system", "Windows spelling", None, "Uses Windows' spelling dictionaries and the words you add"))
+            self.spell = SegmentedControl([system,
                                            ("builtin", "Built-in English", None, "Bundled offline word list")])
             self.spell.set_current(self.settings.get("spell_backend", "system"))
             self.spell.changed.connect(lambda k: (self.settings.set("spell_backend", k), self.settings.save()))
@@ -132,8 +141,15 @@ SHORTCUTS = [
         ("Save page as PNG", "Ctrl+Shift+S"),
         ("Add page to PowerPoint queue", "Ctrl+D"),
         ("Export queue to PowerPoint", "Ctrl+E"),
-        ("MARK this page", "Ctrl+Shift+M" if IS_MAC else "Ctrl+M"),
+        ("MARK this page", MARK_PAGE),
     ]),
+    ("Window", [
+        ("Viewer / PDF Tools", f"{KEYS['viewer']} / {KEYS['tools']}"),
+        ("Show or hide the library / inspector", f"{KEYS['library']} / {KEYS['inspector']}"),
+        ("Rescan the folder", _keys(KEYS["rescan"])),
+        ("Settings", _keys(KEYS["settings"])),
+        ("Keyboard shortcuts", _keys(KEYS["shortcuts"])),
+    ] + ([] if IS_MAC else [("Full screen", "F11")])),
     ("MARK", [
         ("Select · Pen · Highlighter · Text", "V · P · H · T"),
         ("Arrow · Circle · Callout bubble · Eraser", "A · O · B · E"),
