@@ -8,6 +8,8 @@ import os
 import re
 from pathlib import Path
 
+import sysconfig
+
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.win32 import versioninfo as vi
 
@@ -26,6 +28,15 @@ datas = [(str(RES), "eng_viewer/resources")]
 datas += [(str(p), "tessdata") for p in sorted(TESSDATA.glob("*.traineddata")) + [TESSDATA / "LICENSE"]]
 datas += collect_data_files("pptx")  # default slide templates used by python-pptx
 datas += collect_data_files("docx")  # default document template used by python-docx (PDF → Word)
+# Licence texts of the build environment's packages and the HEIF codecs (see docs/IMAGE_DEPENDENCIES.md).
+datas += [(str(ROOT / "build" / "legal-notices"), "legal/dependencies")]
+datas += [(str(ROOT / "packaging" / "licenses"), "legal/codec-licenses")]
+
+# Wheels repaired with delvewheel (e.g. onnx) keep renamed runtime DLLs in a sibling "<package>.libs"
+# folder and add it with os.add_dll_directory at import. Bundle each folder under the same name next
+# to the packages; without onnx.libs the frozen app fails with "DLL load failed ... onnx_cpp2py_export".
+_site = Path(sysconfig.get_paths()["purelib"])
+binaries = [(str(dll), libs.name) for libs in sorted(_site.glob("*.libs")) for dll in sorted(libs.glob("*.dll"))]
 
 BUILD.mkdir(parents=True, exist_ok=True)
 version_file = BUILD / "version_info.txt"
@@ -50,8 +61,8 @@ manifest = (ROOT / "packaging" / "windows" / "app.manifest").read_text(encoding=
 
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
-    pathex=[str(SRC)],
-    binaries=[],
+    pathex=[str(SRC), str(ROOT / "tools")],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         "eng_viewer.core.render_worker",
@@ -60,6 +71,21 @@ a = Analysis(
         "eng_viewer.ui.export_dialog",
         "eng_viewer.ui.preferences",
         "eng_viewer.ui.windows_chrome",
+        # Image, Vector and Edit PDF workspaces (imported when their tab first opens)
+        "eng_viewer.ui.image_editor",
+        "eng_viewer.ui.vector_editor",
+        "eng_viewer.ui.pdf_editor",
+        "eng_viewer.core.image_document",
+        "eng_viewer.core.image_tools",
+        "eng_viewer.core.image_export",
+        "eng_viewer.core.image_ai",
+        "eng_viewer.core.image_clipboard",
+        "eng_viewer.core.vector_document",
+        "eng_viewer.core.vector_trace",
+        "eng_viewer.core.pdf_edit",
+        "editor_smoke",
+        "numpy", "cv2", "pillow_heif", "onnx", "onnxruntime",
+        "ezdxf", "defusedxml",
         # Loaded on first use (PDF Tools tab, tool jobs in the workers)
         "eng_viewer.core.pdf_tools",
         "eng_viewer.ui.tools.workspace",
@@ -89,7 +115,7 @@ a = Analysis(
     excludes=[
         # No OpenSSL: _hashlib would bring libcrypto; hashlib's built-in SHA-2/BLAKE2 cover the app.
         "ssl", "_ssl", "_hashlib", "PySide6.QtDBus",
-        "tkinter", "matplotlib", "numpy", "pandas", "IPython", "pytest", "pytestqt", "PyInstaller",
+        "tkinter", "matplotlib", "pandas", "IPython", "pytest", "pytestqt", "PyInstaller",
         "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtNetwork", "PySide6.QtOpenGL", "PySide6.QtSql",
         "PySide6.QtWebEngineCore", "PySide6.QtMultimedia", "PySide6.Qt3DCore", "PySide6.QtPdf",
         "AppKit", "Foundation", "Quartz", "Vision", "objc",

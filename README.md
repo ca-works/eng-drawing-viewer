@@ -1,6 +1,17 @@
 # ENG Drawing Viewer
 
-A free, offline workspace for engineering drawings. Open folders of PDF drawings and images, view them sharply at any zoom, mark them up with numbered review comments, convert them with 32 PDF tools and turn them into PowerPoint slides, all on your own computer.
+A free, offline workspace for engineering drawings. Open folders of PDF drawings and images, view them sharply at any zoom, mark them up with numbered review comments, edit images, vectors and PDFs, convert them with 32 PDF tools and turn them into PowerPoint slides, all on your own computer.
+
+Four editions are built from this one codebase:
+
+| Edition | For | Package |
+|---|---|---|
+| macOS Universal | Intel and Apple silicon Macs, macOS 14.4 or later | `ENG-Drawing-Viewer-macOS-Universal.dmg` |
+| macOS Apple Silicon | Apple silicon Macs (smaller download), macOS 14.4 or later | `ENG-Drawing-Viewer-macOS-Apple-Silicon.dmg` |
+| Windows | Windows 10 (1809+) or 11, x64 | `ENG-Drawing-Viewer-Windows-x64.zip` (portable) |
+| Linux | x86-64 with glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35, RHEL/Rocky/Alma 9 or later) | `ENG-Drawing-Viewer-Linux-x86_64.AppImage` |
+
+They share every feature; the few platform differences (spelling dictionaries, HEIC decoding, iPhone scanning, sending to an open PowerPoint) are listed in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 Website and downloads: **https://ca-works.github.io/eng-drw/**
 
@@ -8,7 +19,7 @@ Website and downloads: **https://ca-works.github.io/eng-drw/**
 
 ## What it does
 
-**Open anything.** Open a folder or files, or drag PDFs, images or folders onto the window. Every PDF and image in the folder's subfolders is listed in a folder tree or a flat list, sorted naturally (`Sheet 2` before `Sheet 10`), with thumbnails, page counts and sheet sizes (A0–A5, ANSI). PNG, JPEG, TIFF, WebP, BMP, GIF and, on the Mac, HEIC photos open like one-page drawings.
+**Open anything.** Open a folder or files, or drag PDFs, images or folders onto the window. Every PDF and image in the folder's subfolders is listed in a folder tree or a flat list, sorted naturally (`Sheet 2` before `Sheet 10`), with thumbnails, page counts and sheet sizes (A0–A5, ANSI). PNG, JPEG, TIFF, WebP, BMP, GIF and HEIC photos open like one-page drawings.
 
 **View sharply.** Pages are rendered by MuPDF in tiles at your screen's exact pixel density, so text and 0.1 pt hairlines stay crisp from 1.5 % to 4800 %. Zoom with pinch or ⌘-scroll at the pointer, pan by dragging, and flip with ← → straight into the next drawing.
 
@@ -24,6 +35,8 @@ Website and downloads: **https://ca-works.github.io/eng-drw/**
 
 ![Compare Drawings, revision B against revision C](docs/images/compare-light.png)
 
+**Image, Vector and Edit PDF.** Three editing workspaces on their own tabs: a layered image editor (selections and masks, Magic Wand and Magic Eraser, healing and clone, crop/straighten/transform, target-size exports, offline AI background removal with optional model packs), a vector editor that makes and edits real SVG and DXF geometry (paths and nodes, booleans, physical units, raster tracing, laser-cutting checks), and PDF editing (text boxes, shapes, images, page crop and rotation, genuine redaction, Save As). See [docs/IMAGE_EDITOR.md](docs/IMAGE_EDITOR.md), [docs/VECTOR_EDITOR.md](docs/VECTOR_EDITOR.md) and [docs/PDF_EDITOR.md](docs/PDF_EDITOR.md).
+
 **Scan with iPhone (Mac).** Use Apple's Continuity Camera to scan a paper drawing straight into a PDF, ready to mark up.
 
 ## Private by design
@@ -34,23 +47,26 @@ The app keeps its settings, a thumbnail cache (which you can clear in Settings),
 
 ## Install
 
-Download the Mac version (Apple silicon) from the website or the [releases](https://github.com/ca-works/eng-drawing-viewer/releases), open the disk image and drag the app to Applications. The app is free and not notarized by Apple, so the first time you open it, go to System Settings › Privacy & Security and click **Open Anyway**. Details: [docs/INSTALL.md](docs/INSTALL.md).
+- **Mac:** open the disk image and drag the app to Applications. The app is free and not notarized by Apple, so the first time you open it, go to System Settings › Privacy & Security and click **Open Anyway**.
+- **Windows:** extract the ZIP anywhere and start `ENG Drawing Viewer.exe`. No installation or administrator rights are needed.
+- **Linux:** make the AppImage executable (`chmod +x`) and start it; *Help › Add to Applications Menu* adds it to your desktop's menu.
 
-A new Windows version is in development.
+Details: [docs/INSTALL.md](docs/INSTALL.md). Releases appear on the website once they are approved; version 2.2.0 (Apple silicon) is the current public release.
 
 ## Build from source
 
-You need an Apple silicon Mac with Xcode's command-line tools and [uv](https://docs.astral.sh/uv/).
+| Edition | On | Command |
+|---|---|---|
+| macOS Apple Silicon | Apple silicon Mac | `EDITION=apple-silicon packaging/macos/build_macos.sh` |
+| macOS Universal | Apple silicon Mac with Rosetta 2 | see [docs/BUILDING.md](docs/BUILDING.md#macos-universal) |
+| Windows x64 | Windows 10/11 | `packaging\windows\build_windows.ps1` |
+| Linux x86-64 | Ubuntu 22.04 | `packaging/linux/build_linux.sh` |
 
-```bash
-packaging/macos/build_macos.sh
-```
-
-This creates a Python 3.13 build environment, installs the exact packages listed with hashes in `packaging/requirements-macos.txt`, runs PyInstaller, signs the app ad hoc, runs a smoke test and writes the app, a DMG and a ZIP to `release/macos/`. To work on the code:
+Each script installs the exact, hash-checked packages for its platform into a separate build environment, builds the app, runs a smoke test and checks the bundle. The `editions` GitHub Actions workflow builds all four on clean runners when started by hand. To work on the code:
 
 ```bash
 uv venv --python 3.13 .venv
-uv pip install --python .venv/bin/python --require-hashes -r packaging/requirements-macos.txt
+uv pip install --python .venv/bin/python --require-hashes -r packaging/requirements-macos.txt   # or -linux / -windows
 uv pip install --python .venv/bin/python --no-deps -e .
 .venv/bin/python -m eng_viewer          # run the app
 .venv/bin/python -m pytest              # run the tests
@@ -68,10 +84,12 @@ src/eng_viewer/
   ui/            main window, tiled page view, library, queue, export, About
   ui/mark/       MARK window, canvas, annotations, undo, comments
   ui/tools/      PDF Tools workspace, organizer, compare
-  platform/      macOS and Windows integrations
+  ui/image_editor/, ui/vector_editor/, ui/pdf_editor/   editing workspaces
+  platform/      macOS, Windows and Linux integrations
   resources/     icons and dictionaries
 tests/           pytest suite and sample-drawing generator
-packaging/       PyInstaller specs, build scripts, icon generator, launcher
+packaging/       PyInstaller specs and build scripts per platform (macos/, windows/, linux/),
+                 hash-checked dependency locks, icon generator, Windows launcher
 tools/           benchmark, word-list and release tooling
 licenses/        third-party licences
 ```
@@ -82,6 +100,6 @@ Copyright © 2026 ca-works.
 
 ENG Drawing Viewer is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY. See [LICENSE](LICENSE).
 
-It is built on Qt for Python (PySide6, LGPL), PyMuPDF and MuPDF (AGPL), python-pptx, python-docx, XlsxWriter, Pillow, lxml and PyObjC, and its spelling dictionary comes from SCOWL. Their licences are in [licenses/](licenses/) and in the app under Help › About.
+It is built on Qt for Python (PySide6, LGPL), PyMuPDF and MuPDF (AGPL), python-pptx, python-docx, XlsxWriter, Pillow, pillow-heif, NumPy, OpenCV, ONNX Runtime, ezdxf, lxml and PyObjC, and its spelling dictionary comes from SCOWL. Their licences are listed in [docs/LICENSING.md](docs/LICENSING.md), shipped in [licenses/](licenses/), and shown in the app under Help › About.
 
 The ENG Drawing Viewer name and icon identify this project; please don't use them for modified versions in a way that suggests they are the original.

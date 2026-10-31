@@ -1,0 +1,11 @@
+# Tools to build the minimal OpenCV (core, imgproc, photo) from the opencv-python-headless source
+# release in packaging/requirements-macos.txt, for the macOS Universal edition. numpy comes from the
+# edition's own lock (the same version the app ships). Never bundled into the app.
+#   uv pip compile packaging/requirements-opencv-build.in --python-version 3.13 --universal \
+#     --generate-hashes --no-header -o packaging/requirements-opencv-build.txt
+scikit-build==0.18.1
+setuptools==69.5.1
+cmake==3.31.6
+packaging==26.3
+pip==26.2.1
+wheel==0.45.1

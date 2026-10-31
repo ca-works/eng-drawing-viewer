@@ -1,6 +1,8 @@
-"""Reproducible performance measurements for docs/TEST_RESULTS.md.
+r"""Reproducible performance measurements for docs/TEST_RESULTS.md.
 
     .venv/bin/python tools/benchmark.py [--app "release/macos/ENG Drawing Viewer.app"]
+    .venv/bin/python tools/benchmark.py --app build/linux/AppDir          (or the .AppImage file)
+    .venv\Scripts\python tools\benchmark.py --app "release\windows\ENG Drawing Viewer"
 
 Measures (median of several runs where it makes sense):
   * packaged-app startup: window shown / first page rendered (smoke-test mode)
@@ -38,11 +40,29 @@ def child_pids(pid: int) -> list[int]:
     return [int(x) for x in out]
 
 
+def app_executable(app: Path) -> Path:
+    """The program to start for a macOS .app, a Linux AppDir or AppImage, or a Windows app folder."""
+    if app.suffix == ".app":
+        return app / "Contents" / "MacOS" / "ENG Drawing Viewer"
+    if (app / "AppRun").is_file():
+        return app / "AppRun"
+    if (app / "ENG Drawing Viewer.exe").is_file():
+        return app / "ENG Drawing Viewer.exe"
+    return app  # an AppImage file
+
+
+def app_env() -> dict:
+    env = dict(os.environ, ENG_VIEWER_SMOKE_TEST="1")
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        env.pop("QT_QPA_PLATFORM", None)  # the packaged app uses the real display, not offscreen
+    return env
+
+
 def bench_startup(app: Path, sample: Path, runs: int = 5) -> dict:
-    exe = app / "Contents" / "MacOS" / "ENG Drawing Viewer"
+    exe = app_executable(app)
     shown, rendered = [], []
     for _ in range(runs):
-        env = dict(os.environ, ENG_VIEWER_SMOKE_TEST="1")
+        env = app_env()
         t0 = time.perf_counter()
         out = subprocess.run([str(exe), str(sample)], env=env, capture_output=True, text=True, timeout=120).stdout
         wall = time.perf_counter() - t0
@@ -91,8 +111,10 @@ def make_dense_drawing(path: Path) -> Path:
 
 def bench_app_memory(app: Path, folder: Path, pdf: Path) -> tuple[float, list[float]]:
     """Launch the real app on a folder, open a sheet, let it go idle, measure RSS."""
-    exe = app / "Contents" / "MacOS" / "ENG Drawing Viewer"
-    proc = subprocess.Popen([str(exe), str(pdf)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    exe = app_executable(app)
+    env = app_env()
+    env.pop("ENG_VIEWER_SMOKE_TEST")
+    proc = subprocess.Popen([str(exe), str(pdf)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     try:
         time.sleep(8)
         main = rss_mb(proc.pid)

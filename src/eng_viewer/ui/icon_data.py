@@ -5,6 +5,23 @@ emoji or Unicode symbols that render differently on every platform.
 """
 
 ICONS: dict[str, str] = {
+    "image": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="M4 18l5-5 4 3 4-6 4 7"/>',
+    "vector": '<path d="M4 18C4 4 20 4 20 18M4 6h16"/><rect x="2" y="16" width="4" height="4"/><rect x="18" y="16" width="4" height="4"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/>',
+    "lasso": '<path d="M6 16C-2 8 9 1 18 6c7 5 1 13-8 11-6-1-6-5-2-5 5 1 1 10-4 9"/>',
+    "polygon": '<path d="M4 5l14-2 3 13-10 5-8-7z"/><circle cx="4" cy="5" r="1.5"/><circle cx="18" cy="3" r="1.5"/>',
+    "wand": '<path d="M5 20L19 6M14 3v3M19 2v2M21 8h2M14 7l3 3"/>',
+    "quick-select": '<path d="M3 10V5h5M16 3h5v5M21 15v6h-5M8 21H3v-5M8 15l7-7 3 3-7 7z"/>',
+    "crop": '<path d="M6 2v16h16M2 6h16v16M10 6h8v8"/>',
+    "move": '<path d="M12 2.5v19M2.5 12h19M9.3 5.2L12 2.5l2.7 2.7M9.3 18.8l2.7 2.7 2.7-2.7M5.2 9.3L2.5 12l2.7 2.7M18.8 9.3l2.7 2.7-2.7 2.7"/>',
+    "select-rect": '<rect x="3.5" y="5.5" width="17" height="13" stroke-dasharray="2.4 2.2"/>',
+    "select-ellipse": '<ellipse cx="12" cy="12" rx="9" ry="7" stroke-dasharray="2.4 2.2"/>',
+    "magic-eraser": '<path d="M3.6 16.6l6.6-6.6a1.6 1.6 0 0 1 2.3 0l2.1 2.1a1.6 1.6 0 0 1 0 2.3l-4.4 4.4H6.5a1.6 1.6 0 0 1-1.1-.5l-1.8-1.8a.9.9 0 0 1 0-1.3zM7 13.6l3.6 3.6M9.8 21.5h10M18 2.5v4.5M15.75 4.75h4.5M21.5 9v2.4M20.3 10.2h2.4"/>',
+    "background-erase": '<path d="M3 15l9-11 9 8-8 9H8zM7 11l10 8M16 3h5v4"/>',
+    "restore": '<path d="M5 9a8 8 0 1 1 0 7M5 3v6h6M10 13h6M13 10v6"/>',
+    "clone": '<path d="M5 15h14v5H5zM8 15l2-6a4 4 0 1 1 4 0l2 6M4 22h16"/>',
+    "heal": '<path d="M4 14L14 4a4 4 0 0 1 6 6L10 20a4 4 0 0 1-6-6zM8 10l6 6M11 7l6 6M9 14h.1M14 9h.1"/>',
+    "rectangle": '<rect x="3" y="5" width="18" height="14" rx="1"/>',
+    "export": '<path d="M12 16V3M7 8l5-5 5 5M4 13v7h16v-7"/>',
     # Window / navigation
     "sidebar-left": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/><path d="M5.5 8h1.2M5.5 11h1.2"/>',
     "sidebar-right": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M15 4.5v15"/><path d="M17.3 8h1.2M17.3 11h1.2"/>',

@@ -37,5 +37,6 @@ PYTHONPATH="$PWD/src" QT_QPA_PLATFORM=offscreen "$BUILD_VENV/bin/python" -m pyte
 
 echo "==> Checking the built app"
 "$BUILD_VENV/bin/python" tools/check_bundle.py "release/macos/ENG Drawing Viewer.app" \
-  --json release/macos/bundle-check.json ${PRIVATE_TERMS:+--private-terms "$PRIVATE_TERMS"}
+  --json release/macos/bundle-check.json --reviewed packaging/reviewed-upstream-findings.txt \
+  ${PRIVATE_TERMS:+--private-terms "$PRIVATE_TERMS"}
 echo "==> Built in $PWD/release/macos"

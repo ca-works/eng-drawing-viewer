@@ -1,0 +1,23 @@
+# Findings of tools/check_bundle.py that come from upstream wheels, were reviewed, and are reported
+# but do not fail a build. Each line is one exact finding text (a "*" stands for any characters
+# within one path segment of the bundle prefix), then " | " and the reason. Only add a line after
+# reviewing the finding; any finding not listed here still fails the build. Releases list these in
+# the audit report for the owner's decision; this file is not a release approval.
+
+# Build paths compiled into upstream binaries (documentation strings, assert messages). They are
+# the upstream projects' CI machines, not this project's.
+numpy.lib._datasource (strings): home-folder path '/home/guido/' | NumPy docstring example path
+*cv2/cv2.abi3.so: home-folder path '/home/ci/' | OpenCV wheel build path (Linux)
+*cv2*: home-folder path '/Users/xperience/' | OpenCV wheel build path (macOS arm64 wheel)
+*cv2*: home-folder path '/Users/macmini_16g/' | OpenCV wheel build path (macOS x86_64 wheel)
+*cv2/.dylibs/librav1e*: home-folder path '/Users/brew/' | Homebrew build path in rav1e, bundled by OpenCV's macOS wheel
+
+# OpenCV's wheels link FFmpeg, whose libavformat links OpenSSL (1.1.1k on Linux) for network
+# protocols. They load with cv2 and cannot be dropped without a different OpenCV build. The app only
+# passes in-memory images to OpenCV, never URLs or files to its video I/O, and no other component
+# links them. The macOS Universal edition already uses the minimal OpenCV from
+# tools/build_opencv_minimal.sh (no FFmpeg, so none of these); the other editions could too.
+*opencv_python_headless.libs/libcrypto-*: excluded component is bundled | OpenCV's FFmpeg links OpenSSL; unused by the app
+*opencv_python_headless.libs/libssl-*: excluded component is bundled | OpenCV's FFmpeg links OpenSSL; unused by the app
+*cv2/.dylibs/libssl.*: excluded component is bundled | OpenCV's FFmpeg links OpenSSL (macOS wheel); unused by the app
+*cv2/.dylibs/libcrypto.*: excluded component is bundled | OpenCV's FFmpeg links OpenSSL (macOS wheel); unused by the app

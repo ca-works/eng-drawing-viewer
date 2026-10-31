@@ -21,24 +21,38 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 ROOT_FILES = {'LICENSE', 'README.md', 'CHANGELOG.md', 'pyproject.toml', '.gitattributes'}
-DOCS = {'docs/INSTALL.md', 'docs/BUILDING.md', 'docs/PDF_TOOLS.md'}
+DOCS = {'docs/INSTALL.md', 'docs/BUILDING.md', 'docs/PDF_TOOLS.md', 'docs/IMAGE_EDITOR.md', 'docs/VECTOR_EDITOR.md',
+        'docs/PDF_EDITOR.md', 'docs/IMAGE_DEPENDENCIES.md', 'docs/image-ai-model-packs.md', 'docs/ARCHITECTURE.md',
+        'docs/COMPATIBILITY.md', 'docs/LICENSING.md'}
 TOOLS = {'tools/export_public_source.py', 'tools/collect_licenses.py', 'tools/build_wordlist.py',
          'tools/check_bundle.py', 'tools/benchmark.py', 'tools/build_from_archive.sh',
          'tools/compare_builds.py', 'tools/fetch_third_party_sources.py',
          'tools/publish_release.sh', 'tools/curate_licenses.py', 'tools/fetch_tessdata.py',
-         'tools/build_from_archive.ps1'}
+         'tools/build_from_archive.ps1',
+         # Bundled into every app (the frozen self-test), so part of the corresponding source.
+         'tools/editor_smoke.py',
+         # Build inputs of the Linux and macOS Universal editions and the release manifest.
+         'tools/fuse_macos.py', 'tools/build_opencv_minimal.sh', 'tools/release_manifest.py'}
+# Build files whose names have no extension, or extensions only the packaging folder uses.
+PACKAGING_NAMES = {'packaging/linux/AppRun'}
+PACKAGING_SUFFIXES = {'.desktop', '.xml', '.patch', '.asc'}
 DENIED = {'audit', 'reference', '.git', '.github', 'build', 'dist', 'release', '.venv', '__pycache__'}
 BINARY_SUFFIXES = {'.exe', '.dll', '.dylib', '.so', '.pyc', '.zip', '.dmg', '.pdf'}
 # Patterns are assembled so this scanner can itself be exported without exemptions.
 PATTERNS = []
 PATTERNS += [re.compile(x, re.I) for x in (
-    r'/(?:Users|home)/(?!runner/|me/|you/)[A-Za-z0-9_.-]+', r'[A-Z]:\\Users\\[^\\\s]+',
+    r'/(?:Users|home)/(?!runner/|me/|you/|user/|ci/|someone/)[A-Za-z0-9_.-]+', r'[A-Z]:\\Users\\[^\\\s]+',
     r'-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----',
     r'gh[pousr]_[A-Za-z0-9]{20,}', r'AKIA[0-9A-Z]{16}',
 )]
 # Email addresses are blocked except in third-party licence texts, which credit their authors.
 EMAIL = re.compile(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}')
-EMAIL_ALLOWED = ('noreply@', 'users.noreply.github.com', 'example.com', 'example.org')
+EMAIL_ALLOWED = ('noreply@', 'users.noreply.github.com', 'example.com', 'example.org',
+                 # The AppImage project's own contact, cited in packaging/linux/appimage-runtime/README.md.
+                 '@appimage.org')
+# Lists the upstream build paths found in third-party binaries (with the reason each is accepted),
+# so the home-folder pattern is not applied to it. Private terms and other patterns still are.
+UPSTREAM_PATH_LIST = 'packaging/reviewed-upstream-findings.txt'
 
 
 def allowed(name):
@@ -51,6 +65,8 @@ def allowed(name):
             or (name.startswith('docs/images/') and p.suffix.lower() == '.png')
             # Licence texts keep their upstream names, often without an extension (COPYING, LICENSE).
             or p.parts[0] == 'licenses'
+            or name in PACKAGING_NAMES
+            or (p.parts[0] == 'packaging' and p.suffix.lower() in PACKAGING_SUFFIXES)
             or (p.parts[0] in {'src', 'tests', 'packaging', 'licenses'}
                 and p.suffix.lower() in {'.py', '.toml', '.txt', '.md', '.sh', '.ps1', '.bat', '.spec', '.go', '.mod', '.svg', '.png', '.ico', '.icns', '.in',
                                          '.iss', '.manifest'}))
@@ -83,8 +99,9 @@ def findings(name, data):
     # In binary files (images) short terms match random bytes; exiftool checks their metadata.
     terms = [rx for rx, short in PRIVATE if not (binary and short)]
     found = [f'{name}: matches a private term' for p in terms if p.search(text)][:1]
-    found += [f'{name}: matches {p.pattern!r}' for p in PATTERNS if p.search(text)]
-    if not name.startswith('licenses/'):
+    found += [f'{name}: matches {p.pattern!r}' for p in PATTERNS
+              if p.search(text) and not (name == UPSTREAM_PATH_LIST and p is PATTERNS[0])]
+    if not name.startswith(('licenses/', 'packaging/licenses/')):
         found += [f'{name}: email address' for m in EMAIL.finditer(text)
                   if not any(a in m.group(0) for a in EMAIL_ALLOWED)][:1]
     return found

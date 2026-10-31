@@ -18,6 +18,11 @@ dependencies = [
     "python-docx>=1.1",  # PDF → Word in PDF Tools
     "XlsxWriter>=3.1",  # PDF → Excel in PDF Tools
     "pillow>=10",  # WebP images
+    "numpy>=2.2,<3",
+    "opencv-python-headless>=4.11,<6",  # local selections / inpainting, no second Qt runtime
+    "pillow-heif>=1.0,<2",  # explicit HEIF codec on both platforms
+    "ezdxf>=1.4,<2",
+    "defusedxml>=0.7,<1",
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",  # HEIC photos from the iPhone
     "pyobjc-framework-Vision>=10; sys_platform == 'darwin'",  # on-device OCR
@@ -26,6 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-qt>=4.4", "pyinstaller>=6.11"]
+ai = ["onnxruntime>=1.23,<2", "onnx>=1.19,<2"]
 
 [project.gui-scripts]
 eng-drawing-viewer = "eng_viewer.app:main"

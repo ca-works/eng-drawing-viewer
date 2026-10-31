@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for the macOS .app bundle (Apple Silicon / arm64).
+# PyInstaller spec for the macOS .app bundle: Apple Silicon, Intel, or universal2 (both).
 # Build with: packaging/macos/build_macos.sh
 import os
 import re
+import platform
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files
@@ -18,10 +19,12 @@ datas = [(str(RES), "eng_viewer/resources")]
 datas += [(str(ROOT / "LICENSE"), "legal"), (str(ROOT / "licenses"), "legal/licenses")]
 datas += collect_data_files("pptx")  # default slide templates used by python-pptx
 datas += collect_data_files("docx")  # default document template used by python-docx (PDF → Word)
+datas += [(str(ROOT / "build" / "legal-notices"), "legal/dependencies")]
+datas += [(str(ROOT / "packaging" / "licenses"), "legal/codec-licenses")]
 
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
-    pathex=[str(SRC)],
+    pathex=[str(SRC), str(ROOT / "tools")],
     binaries=[],
     datas=datas,
     hiddenimports=[
@@ -30,6 +33,18 @@ a = Analysis(
         "eng_viewer.ui.mark.window",
         "eng_viewer.ui.export_dialog",
         "eng_viewer.ui.preferences",
+        "eng_viewer.ui.image_editor",
+        "eng_viewer.core.image_document",
+        "eng_viewer.core.image_tools",
+        "eng_viewer.core.image_export",
+        "eng_viewer.core.image_ai",
+        "eng_viewer.core.image_clipboard",
+        "eng_viewer.core.vector_document",
+        "eng_viewer.core.vector_trace",
+        "eng_viewer.core.pdf_edit",
+        "editor_smoke",
+        "numpy", "cv2", "pillow_heif", "onnx", "onnxruntime",
+        "ezdxf", "defusedxml",
         # Loaded on first use (PDF Tools tab, tool jobs in the workers, iPhone scans)
         "eng_viewer.core.pdf_tools",
         "eng_viewer.ui.tools.workspace",
@@ -49,7 +64,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "ssl", "_ssl", "PySide6.QtDBus",
-        "tkinter", "matplotlib", "numpy", "pandas", "IPython", "pytest", "pytestqt", "PyInstaller",
+        "tkinter", "matplotlib", "pandas", "IPython", "pytest", "pytestqt", "PyInstaller",
         "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtNetwork", "PySide6.QtOpenGL", "PySide6.QtSql",
         "PySide6.QtWebEngineCore", "PySide6.QtMultimedia", "PySide6.Qt3DCore", "PySide6.QtPdf",
         "win32com", "pythoncom", "pywintypes",
@@ -77,7 +92,9 @@ exe = EXE(
     upx=False,
     console=False,
     argv_emulation=False,  # file-open events are handled natively via QFileOpenEvent
-    target_arch="arm64",
+    # The Universal edition builds with universal2: PyInstaller then refuses any binary that lacks
+    # either architecture. The other editions build for the machine's own architecture.
+    target_arch=os.environ.get("ENG_MAC_TARGET_ARCH") or platform.machine(),
     codesign_identity=None,  # signed ad hoc by build_macos.sh
     entitlements_file=None,
 )

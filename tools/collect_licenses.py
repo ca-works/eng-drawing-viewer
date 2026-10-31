@@ -12,6 +12,10 @@ installed files (or, for libraries PyInstaller moves, the file name), or to one 
 in CURATED below (the Python runtime, the PyInstaller bootloader, this project). The run fails if
 any shipped file can't be accounted for, so a new dependency can't slip in without its licence.
 
+A Linux build is the AppDir; its licences are written with --out into the app's legal folder.
+Libraries PyInstaller copies from the build machine are matched to the Debian/Ubuntu package that
+installed them (dpkg), and that package's copyright file is shipped.
+
 A Windows build is the application folder (launcher, app\ and legal\). Its licences are written
 with --out into the build itself, because the Windows build ships different native components
 (the Microsoft C++ runtime, pywin32, the Go runtime in the launcher, Tesseract language data).
@@ -59,6 +63,36 @@ SHARED_LICENCE = {
     "pyside6-essentials": "Qt for Python 6.12.0, under the GNU LGPL v3 (or GPL v2/v3). The licence texts are in licenses/curated/Qt/.",
     "shiboken6": "Shiboken 6.12.0 (part of Qt for Python), under the GNU LGPL v3 (or GPL v2/v3). The licence texts are in licenses/curated/Qt/.",
 }
+
+
+LINUX_INTERNAL = "usr/lib/eng-drawing-viewer/_internal/"
+LINUX_EXE = "usr/lib/eng-drawing-viewer/eng-drawing-viewer"
+# Linux: system libraries copied from the build machine, by component name: (package, version, copyright file).
+HOST_PACKAGES: dict[str, tuple[str, str, Path | None]] = {}
+
+
+def host_package(name: str) -> str | None:
+    """The Debian/Ubuntu package that installed the library ``name`` on the build machine."""
+    import subprocess
+
+    for folder in ("/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib", "/lib"):
+        candidate = Path(folder) / name
+        if not candidate.exists():
+            continue
+        for path in dict.fromkeys((str(candidate), str(candidate.resolve()))):
+            try:
+                found = subprocess.run(["dpkg-query", "-S", path], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            if found.returncode == 0 and ":" in found.stdout:
+                pkg = found.stdout.split(":")[0].strip()
+                version = subprocess.run(["dpkg-query", "-W", "-f=${Version}", pkg], capture_output=True,
+                                         text=True, timeout=30).stdout.strip()
+                copyright_file = Path("/usr/share/doc") / pkg / "copyright"
+                comp = f"{pkg} (system library from the build machine)"
+                HOST_PACKAGES[comp] = (pkg, version, copyright_file if copyright_file.is_file() else None)
+                return comp
+    return None
 
 
 def norm(name: str) -> str:
@@ -162,8 +196,9 @@ def main():
     if len(args) != 1:
         raise SystemExit(__doc__)
     bundle = Path(args[0]).resolve()
-    windows = not (bundle / "Contents").is_dir()
-    contents = bundle if windows else bundle / "Contents"
+    linux = (bundle / "AppRun").is_file()
+    windows = not linux and not (bundle / "Contents").is_dir()
+    contents = bundle if windows or linux else bundle / "Contents"
     curated = LIC / "curated"
     scowl = LIC / "SCOWL.txt"
     if out_dir is not None:
@@ -191,13 +226,23 @@ def main():
 
     for path in sorted(p for p in contents.rglob("*") if p.is_file() and not p.is_symlink()):
         rel = path.relative_to(contents).as_posix()
-        if windows:
+        if linux:
+            inner = rel[len(LINUX_INTERNAL):] if rel.startswith(LINUX_INTERNAL) else rel
+        elif windows:
             inner = rel[len("app/_internal/"):] if rel.startswith("app/_internal/") else rel
         else:
             inner = rel.split("/", 1)[1] if rel.startswith(("Frameworks/", "Resources/")) else rel
         name = path.name
         comp = None
-        if windows and (rel in ("ENG Drawing Viewer.exe", "Read Me.txt", "Licence.txt") or rel.startswith("legal/")):
+        if linux and (rel == "AppRun" or "/" not in rel or rel.startswith("usr/share/")):
+            comp = "ENG Drawing Viewer (this project)"  # AppRun, desktop entry, icons, metadata, docs
+        elif linux and rel == LINUX_EXE:
+            comp = "PyInstaller bootloader"
+        elif linux and inner.startswith("tessdata/"):
+            comp = "Tesseract language data (tessdata_fast 4.1.0)"
+        elif linux and (name.startswith("libpython3.13.so") or inner in ("base_library.zip",)):
+            comp = "CPython 3.13"
+        elif windows and (rel in ("ENG Drawing Viewer.exe", "Read Me.txt", "Licence.txt") or rel.startswith("legal/")):
             comp = "ENG Drawing Viewer (this project)"
             if rel == "ENG Drawing Viewer.exe":
                 shipped["Go standard library and runtime (in the launcher)"].append(rel)
@@ -224,6 +269,8 @@ def main():
                 dist = by_name.get(name)
             if dist is not None:
                 comp = dist.metadata["Name"]
+        if comp is None and linux:
+            comp = host_package(name)  # a system library PyInstaller copied from the build machine
         if comp is None:
             unknown.append(rel)
         else:
@@ -244,14 +291,15 @@ def main():
                 by_module.setdefault(p.name.split(".")[0], dist)  # module files, e.g. win32/lib/win32con.py
             for folder in p.parts[:-1]:
                 by_module.setdefault(folder, dist)  # packages and data folders, e.g. pywin32_system32
-    exe = contents / "app" / "ENGDrawingViewer.exe" if windows else contents / "MacOS" / "ENG Drawing Viewer"
+    exe = (contents / LINUX_EXE if linux else
+           contents / "app" / "ENGDrawingViewer.exe" if windows else contents / "MacOS" / "ENG Drawing Viewer")
     carchive = CArchiveReader(str(exe))
     for name, entry in carchive.toc.items():
         if entry[-1] != "z":
             continue
         for mod in carchive.open_embedded_archive(name).toc:
             top = mod.split(".")[0]
-            if top == "eng_viewer":
+            if top in ("eng_viewer", "editor_smoke"):  # editor_smoke: the frozen self-test (tools/)
                 comp = "ENG Drawing Viewer (this project)"
             elif top in owners:
                 comp = dists[norm(owners[top][0])].metadata["Name"]
@@ -325,14 +373,32 @@ def main():
             texts.append((comp, MSVC_NOTE))
         elif comp.startswith("Tesseract language data"):
             rows.append([comp, "4.1.0", "Apache-2.0", len(files)])
-            lic = next((contents / "app" / "_internal" / "tessdata").glob("LICENSE*"), None)
+            tess = contents / (LINUX_INTERNAL if linux else "app/_internal/") / "tessdata"
+            lic = next(tess.glob("LICENSE*"), None)
             if lic is not None:
                 target = OUT / "tessdata_fast"
                 target.mkdir()
                 shutil.copy2(lic, target / "LICENSE")
                 texts.append((f"{comp}: LICENSE", lic.read_text(encoding="utf-8", errors="replace")))
+        elif comp in HOST_PACKAGES:
+            pkg, version, copyright_file = HOST_PACKAGES[comp]
+            rows.append([comp, version, "see the package's copyright file", len(files)])
+            target = OUT / comp.replace("/", "_")
+            target.mkdir()
+            if copyright_file is not None:
+                shutil.copy2(copyright_file, target / "copyright")
+                texts.append((f"{comp} {version}: copyright", copyright_file.read_text(encoding="utf-8", errors="replace")))
         else:
             rows.append([comp, "", "AGPL-3.0-or-later", len(files)])
+
+    if linux:
+        # Not a file in the AppDir: the executable header of the AppImage itself.
+        runtime_doc = ROOT / "packaging" / "linux" / "appimage-runtime"
+        rows.append(["AppImage type 2 runtime (20251108, AppImage header)", "20251108",
+                     "MIT; statically includes libfuse 3.15.0 (LGPL-2.1-only), squashfuse 0.5.2 (BSD-2-Clause), "
+                     "zstd, zlib, mimalloc, musl", 1])
+        for f in ("LICENSE.txt", "README.md"):
+            texts.append((f"AppImage type 2 runtime: {f}", (runtime_doc / f).read_text(encoding="utf-8")))
 
     texts.extend(extra_texts)
     if out_dir is not None and curated.is_dir():
@@ -367,7 +433,7 @@ def main():
         buf.write("\n\n" + "=" * 72 + f"\n{title}\n" + "=" * 72 + "\n\n" + text.strip() + "\n")
     (LIC / "THIRD_PARTY_NOTICES.txt").write_text(buf.getvalue(), encoding="utf-8")
     if sbom:
-        if windows:
+        if windows or linux:
             version = app_version()
         else:
             import plistlib

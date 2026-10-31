@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import heapq
 import itertools
+import mmap
 import multiprocessing as mp
 import os
+import struct
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -81,6 +84,37 @@ def _freeze(value):
 def default_worker_count() -> int:
     cpus = os.cpu_count() or 4
     return max(2, min(4, cpus // 2))
+
+
+def _recv_buffer(conn) -> mmap.mmap:
+    """``conn.recv_bytes()`` into new anonymous memory, read straight from the pipe (POSIX only).
+
+    Connection.recv_bytes assembles large messages in a BytesIO, and bytearray(n) zero-fills,
+    both with the GIL held; on a 30-100 MB page bitmap the page faults alone stalled the
+    interface thread by 100-250 ms. An anonymous mapping is filled lazily, so every fault happens
+    inside readv while the GIL is released. Same framing as
+    multiprocessing.connection.Connection._send_bytes: a 4-byte big-endian length, or -1
+    followed by an 8-byte length for messages over 2 GB.
+    """
+    fd = conn.fileno()
+
+    def fill(view):
+        while view:
+            n = os.readv(fd, [view])
+            if not n:
+                raise EOFError
+            view = view[n:]
+
+    head = bytearray(4)
+    fill(memoryview(head))
+    (size,) = struct.unpack("!i", head)
+    if size == -1:
+        head = bytearray(8)
+        fill(memoryview(head))
+        (size,) = struct.unpack("!Q", head)
+    buf = mmap.mmap(-1, max(size, 1))
+    fill(memoryview(buf)[:size])
+    return buf
 
 
 class RenderService(QObject):
@@ -275,8 +309,11 @@ class RenderService(QObject):
         if job.key is not None and self._pending_by_key.get(job.key) is job:
             del self._pending_by_key[job.key]
         w.job = job
+        args = job.args
+        if job.kind == "render" and job.image_format == "rgb32" and sys.byteorder == "little":
+            args = {**args, "bgrx": True}  # the worker hands over Format_RGB32 bytes directly
         try:
-            w.conn.send((job.job_id, job.kind, job.args))
+            w.conn.send((job.job_id, job.kind, args))
         except Exception:
             self._worker_died_locked(w)
 
@@ -306,12 +343,18 @@ class RenderService(QObject):
     def _read_result(self, w: _Worker):
         job = w.job
         job_id, ok, header = w.conn.recv()
-        payload = w.conn.recv_bytes() if ok and header.get("has_payload") else None
+        has_payload = ok and header.get("has_payload")
         image = None
-        if payload is not None:
-            fmt_rgb = QImage.Format.Format_RGB888
-            raw = QImage(payload, header["w"], header["h"], header["stride"], fmt_rgb)
-            if job is not None and job.image_format == "rgb888":
+        if has_payload and header.get("format") == "bgrx" and os.name == "posix":
+            # Wrap the received pixels without copying them. QImage keeps a reference to the buffer
+            # and may draw into it (MARK paints on page images), so it must be private and writable.
+            payload = _recv_buffer(w.conn)
+            image = QImage(payload, header["w"], header["h"], header["stride"], QImage.Format.Format_RGB32)
+        elif has_payload:
+            payload = w.conn.recv_bytes()
+            fmt_raw = QImage.Format.Format_RGB32 if header.get("format") == "bgrx" else QImage.Format.Format_RGB888
+            raw = QImage(payload, header["w"], header["h"], header["stride"], fmt_raw)
+            if fmt_raw == QImage.Format.Format_RGB32 or (job is not None and job.image_format == "rgb888"):
                 image = raw.copy()
             else:
                 image = raw.convertToFormat(QImage.Format.Format_RGB32)

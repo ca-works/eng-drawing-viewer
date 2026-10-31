@@ -72,9 +72,11 @@ def test_scan_survives_symlink_loop_and_unreadable_folder(tmp_path):
         res = scan_folder(tmp_path, recursive=True)
     finally:
         os.chmod(locked, 0o755)
-    assert [p.name for p in res.paths] == ["x.pdf"]
     if os.geteuid() != 0:
+        assert [p.name for p in res.paths] == ["x.pdf"]
         assert res.errors  # reported, not raised
+    else:  # root (e.g. a CI container) can read a folder with no permissions
+        assert sorted(p.name for p in res.paths) == ["x.pdf", "y.pdf"]
 
 
 def test_scan_can_be_cancelled(corpus):

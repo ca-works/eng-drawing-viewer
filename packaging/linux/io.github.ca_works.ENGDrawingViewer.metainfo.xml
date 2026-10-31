@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 ca-works -->
+<component type="desktop-application">
+  <id>io.github.ca_works.ENGDrawingViewer</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <name>ENG Drawing Viewer</name>
+  <summary>View, mark up and convert engineering drawings offline</summary>
+  <developer id="io.github.ca_works">
+    <name>ca-works</name>
+  </developer>
+  <description>
+    <p>
+      A free, offline workspace for engineering drawings. View folders of PDF drawings and images
+      sharply at any zoom, mark them up with numbered review comments, edit images, vectors and PDFs,
+      convert them with offline PDF tools and turn them into PowerPoint slides, all on your own computer.
+    </p>
+    <ul>
+      <li>Folders and nested subfolders of PDFs and images, with thumbnails and natural sorting</li>
+      <li>MARK: pens, highlighters, arrows, circles, text and numbered callouts with comments</li>
+      <li>PowerPoint export without PowerPoint installed</li>
+      <li>Image, Vector (SVG and DXF) and PDF editing</li>
+      <li>No account, no telemetry and no network connections</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.ca_works.ENGDrawingViewer.desktop</launchable>
+  <url type="homepage">https://ca-works.github.io/eng-drw/</url>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>eng-drawing-viewer</binary>
+  </provides>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

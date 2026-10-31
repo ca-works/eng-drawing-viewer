@@ -96,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setApplicationVersion(__version__)
+    if sys.platform.startswith("linux"):
+        from .platform.linux import APP_ID
+
+        # Wayland compositors and X11 docks match windows to the desktop entry (and its icon) by this.
+        app.setDesktopFileName(APP_ID)
     if sys.platform != "darwin":
         app.setApplicationDisplayName(APP_NAME)
         # The app's stylesheet draws most of the interface. Underneath it, Windows uses Qt's
@@ -117,9 +122,16 @@ def main(argv: list[str] | None = None) -> int:
     theme.apply()
     icon_path = resource_path("app_icon_512.png")
     app_icon = QPixmap(str(icon_path)) if icon_path.exists() else None
-    if sys.platform != "darwin":
+    if sys.platform == "win32":
         ico = resource_path("ENG_Drawing_Viewer.ico")
         app.setWindowIcon(QIcon(str(ico)) if ico.exists() else QIcon(app_icon))
+    elif sys.platform != "darwin":
+        icon = QIcon()
+        for size in (256, 512):
+            png = resource_path(f"app_icon_{size}.png")
+            if png.exists():
+                icon.addFile(str(png))
+        app.setWindowIcon(icon)
     mark("theme")
 
     from .ui.splash import Splash
@@ -184,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     def report():
         for name, t in marks:
             say(f"[startup] {t * 1000:7.1f} ms  {name}")
+        if smoke:
+            say(f"[smoke] Qt platform: {app.platformName()}, device pixel ratio: {window.devicePixelRatioF():g}")
 
     if smoke:
         # Packaging check: open the PDF given on the command line, wait until the
@@ -224,6 +238,17 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code["value"] = 4
                 else:
                     say(f"[smoke] {len(jobs)} PDF tool jobs OK (Word, Excel, compress)")
+                    try:
+                        import json
+                        if not getattr(sys, "frozen", False):
+                            sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+                        from editor_smoke import run_editor_smoke
+                        say("[smoke] Editors: " + json.dumps(run_editor_smoke(), sort_keys=True))
+                    except Exception as exc:
+                        import traceback
+                        say(traceback.format_exc())
+                        say(f"[smoke] FAILED: editor runtime: {exc}")
+                        exit_code["value"] = 5
                 QTimer.singleShot(200, app.quit)
 
             for job in jobs:

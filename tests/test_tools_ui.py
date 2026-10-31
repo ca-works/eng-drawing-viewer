@@ -70,6 +70,23 @@ def _folder_to(monkeypatch, path: Path):
 
 
 # ------------------------------------------------------------------ tools tab
+def test_images_dropped_on_the_editor_tabs_open_there(qtbot, win, photo, tmp_path):
+    win.set_mode("image")
+    _drop(win.image_editor, [photo])
+    qtbot.waitUntil(lambda: len(win.image_editor.states) == 1, timeout=15000)
+    assert win.image_editor.doc.size == (1200, 800) and win._mode == "image"
+    other = tmp_path / "other.jpg"
+    Image.new("RGB", (64, 48), "red").save(other)
+    _drop(win, [other])  # dropped on the window frame while the Image tab is open
+    qtbot.waitUntil(lambda: len(win.image_editor.states) == 2, timeout=15000)
+    assert win.image_editor.doc.size == (64, 48)
+    qtbot.waitUntil(lambda: win.image_editor._job is None, timeout=15000)
+    win.set_mode("vector")
+    _drop(win.vector_editor, [other])
+    assert win.vector_editor.raster is not None and win.vector_editor.raster.size == (64, 48)
+    assert win._mode == "vector"
+
+
 def test_tools_mode_switches_and_keeps_the_open_drawing(qtbot, win, corpus):
     from eng_viewer.ui.tools.specs import SPECS
 
@@ -83,6 +100,24 @@ def test_tools_mode_switches_and_keeps_the_open_drawing(qtbot, win, corpus):
     win.set_mode("viewer")
     assert win.content_stack.currentWidget() is win.viewer_split
     assert win.doc_path == str(corpus["a4"]) and win.act_mark.isEnabled()
+
+
+def test_image_and_vector_editors_have_their_own_tabs(qtbot, win):
+    from eng_viewer.ui.main_window import WorkspaceControl
+
+    ctrl = win.mode_ctrl
+    assert isinstance(ctrl, WorkspaceControl)
+    keys = [t[0] for t in WorkspaceControl.TABS]
+    assert keys == ["viewer", "pdf_edit", "tools", "image", "vector"]
+    rects = ctrl._rects()
+    for i, key in enumerate(keys):  # click each tab like a user
+        QTest.mouseClick(ctrl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, rects[i].center().toPoint())
+        qtbot.waitUntil(lambda key=key: win._mode == key, timeout=5000)
+        assert ctrl.current_key() == key
+    assert win.content_stack.currentWidget() is win.vector_editor
+    win.set_mode("image")
+    assert win.content_stack.currentWidget() is win.image_editor and ctrl.current_key() == "image"
+    win.set_mode("viewer")
 
 
 def test_merge_tool_writes_a_new_pdf(qtbot, win, corpus, tmp_path, monkeypatch):

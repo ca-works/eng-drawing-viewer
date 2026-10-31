@@ -52,6 +52,11 @@ class _State:
             self._drop(next(iter(self.docs)))
         return doc
 
+    def release(self, path: str):
+        """Close a cached document now (Windows cannot delete files that are still open)."""
+        if path in self.docs:
+            self._drop(path)
+
     def _drop(self, path: str):
         for key in [k for k in self.dlists if k[0] == path]:
             del self.dlists[key]
@@ -170,7 +175,30 @@ def _render(state: _State, args: dict):
             pass
     if args.get("no_return"):
         return header, None
+    if args.get("bgrx"):
+        header["format"] = "bgrx"
+        header["stride"] = pix.width * 4
+        return header, _bgrx(pix)
     return header, pix  # sent by worker_main while the pixmap is still alive
+
+
+def _bgrx(pix):
+    """RGB pixmap -> 32-bit B, G, R, 0xFF bytes: QImage.Format_RGB32 on little-endian machines.
+
+    Done here rather than with QImage.convertToFormat in the interface process: Qt splits large
+    conversions across its thread pool and the caller waits holding the GIL, which froze the UI
+    for 200-400 ms whenever the render workers kept every core busy.
+    """
+    import numpy as np  # imported on the first full render only
+
+    h, w = pix.height, pix.width
+    rgb = np.frombuffer(pix.samples_mv, np.uint8).reshape(h, pix.stride)[:, :w * 3].reshape(h, w, 3)
+    out = np.empty((h, w, 4), np.uint8)
+    out[..., 0] = rgb[..., 2]
+    out[..., 1] = rgb[..., 1]
+    out[..., 2] = rgb[..., 0]
+    out[..., 3] = 255
+    return memoryview(out).cast("B")
 
 
 def _pptx(_state: _State, args: dict):
@@ -188,7 +216,14 @@ def _tool(_state: _State, args: dict):
         raise ValueError(str(exc)) from None
 
 
-HANDLERS = {"info": _page_info, "render": _render, "pptx": _pptx, "tool": _tool}
+def _pdf_edit(_state: _State, args: dict):
+    from . import pdf_edit
+
+    return pdf_edit.run(args), None
+
+
+HANDLERS = {"info": _page_info, "render": _render, "pptx": _pptx, "tool": _tool,
+            "pdf_edit": _pdf_edit}
 
 
 def worker_main(conn) -> None:
@@ -233,7 +268,13 @@ def worker_main(conn) -> None:
             break
         job_id, kind, args = msg
         try:
-            header, payload = HANDLERS[kind](state, args)
+            try:
+                header, payload = HANDLERS[kind](state, args)
+            finally:
+                # Temporary files (e.g. Edit PDF revisions) are closed after each job so their
+                # owner can delete them; on Windows an open file cannot be removed.
+                if isinstance(args, dict) and args.get("transient") and args.get("path"):
+                    state.release(str(args["path"]))
         except MemoryError:
             conn.send((job_id, False, {"error": "Not enough memory to render this page."}))
             continue
@@ -244,5 +285,6 @@ def worker_main(conn) -> None:
         header["has_payload"] = payload is not None
         conn.send((job_id, True, header))
         if payload is not None:
-            conn.send_bytes(payload.samples_mv)
+            # A pixmap (its samples are valid only while it lives) or ready-made bytes.
+            conn.send_bytes(payload.samples_mv if hasattr(payload, "samples_mv") else payload)
         del payload

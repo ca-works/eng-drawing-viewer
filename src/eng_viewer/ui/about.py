@@ -33,14 +33,42 @@ def legal_dir() -> Path:
         for folder in (Path(frozen) / "legal", Path(sys.executable).resolve().parent.parent / "legal"):
             if folder.is_dir():
                 return folder
-    return Path(__file__).resolve().parents[3]
+    source = Path(__file__).resolve().parents[3]
+    if (source / "LICENSE").is_file():
+        return source
+    # A regular install (as the Windows build script tests it) run from a source checkout.
+    cwd = Path.cwd()
+    if (cwd / "LICENSE").is_file() and (cwd / "licenses").is_dir():
+        return cwd
+    return source
+
+
+def _installed_license() -> Path | None:
+    """A regular (non-editable) install keeps LICENSE in the package's dist-info folder."""
+    if getattr(sys, "frozen", False):
+        return None  # builds ship LICENSE in their 'legal' folder
+    try:
+        from importlib.metadata import distribution
+
+        # Built at run time so PyInstaller does not bundle this package's install metadata,
+        # which records the build machine's source path.
+        dist = distribution("-".join(("eng", "drawing", "viewer")))
+        for f in dist.files or []:
+            if f.name == "LICENSE":
+                return Path(dist.locate_file(f))
+    except Exception:
+        pass
+    return None
 
 
 def license_text() -> str:
-    try:
-        return (legal_dir() / "LICENSE").read_text(encoding="utf-8")
-    except OSError:
-        return f"The licence text was not found. {APP_NAME} is licensed under the {LICENSE_NAME}."
+    for path in (legal_dir() / "LICENSE", _installed_license()):
+        try:
+            if path is not None:
+                return path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return f"The licence text was not found. {APP_NAME} is licensed under the {LICENSE_NAME}."
 
 
 def third_party_text() -> str:

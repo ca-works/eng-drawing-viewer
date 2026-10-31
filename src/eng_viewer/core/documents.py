@@ -48,7 +48,7 @@ def heic_to_png(path: str) -> bytes:
 
         return windows_heic_to_png(path)
     if sys.platform != "darwin":
-        raise ValueError("HEIC images can only be opened on macOS and Windows")
+        return _heif_to_png(path)
     import Quartz
     from Foundation import NSURL, NSMutableData
 
@@ -72,6 +72,26 @@ def heic_to_png(path: str) -> bytes:
     if not Quartz.CGImageDestinationFinalize(dest):
         raise ValueError("Could not decode the image")
     return bytes(data)
+
+
+def _register_heif() -> None:
+    """Let Pillow read HEIC/HEIF with the bundled libheif (Linux has no system decoder to rely on)."""
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+
+
+def _heif_to_png(path: str) -> bytes:
+    from PIL import Image, ImageOps
+
+    _register_heif()
+    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+    with Image.open(path) as im:
+        check_pixels(*im.size)
+        im = ImageOps.exif_transpose(im)
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue()
 
 
 def _webp_to_png(path: str) -> bytes:
@@ -106,6 +126,8 @@ def image_pixels(path: str) -> tuple[int, int] | None:
     try:
         from PIL import Image
 
+        if extension(path) in (".heic", ".heif"):
+            _register_heif()
         Image.MAX_IMAGE_PIXELS = MAX_PIXELS
         with Image.open(path) as im:
             w, h = im.size

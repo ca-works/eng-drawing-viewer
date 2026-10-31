@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Entry point of the ENG Drawing Viewer AppImage. The AppImage runtime mounts the image read-only and
+# runs this script; $APPDIR is the mount point. Everything the app needs, except the graphics driver,
+# C library and desktop libraries every Linux desktop has, is inside the image.
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# Native file dialogs through the XDG desktop portal (GNOME, KDE, and others); Qt falls back to its
+# own dialog where no portal runs. People who set their own Qt theme keep it.
+if [ -z "${QT_QPA_PLATFORMTHEME:-}" ]; then
+    export QT_QPA_PLATFORMTHEME=xdgdesktopportal
+fi
+# Native Wayland when the session has it, X11 (or XWayland) otherwise or if Wayland fails to start.
+if [ -z "${QT_QPA_PLATFORM:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    export QT_QPA_PLATFORM="wayland;xcb"
+fi
+
+exec "$HERE/usr/lib/eng-drawing-viewer/eng-drawing-viewer" "$@"

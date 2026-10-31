@@ -8,6 +8,7 @@ from pathlib import Path
 
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
+IS_LINUX = sys.platform.startswith("linux")
 
 
 def reveal_in_file_manager(path: str | None) -> None:
@@ -21,6 +22,10 @@ def reveal_in_file_manager(path: str | None) -> None:
             from .windows import reveal_in_explorer
 
             reveal_in_explorer(str(p))
+        elif IS_LINUX:
+            from .linux import reveal
+
+            reveal(str(p))
         else:
             from PySide6.QtCore import QUrl
             from PySide6.QtGui import QDesktopServices

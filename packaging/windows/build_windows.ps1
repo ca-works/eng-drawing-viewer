@@ -70,6 +70,7 @@ Step "Installing hash-checked build dependencies"
 Run uv pip install --quiet --python $Py --require-hashes -r packaging\requirements-windows.txt
 Run uv pip install --quiet --python $Py --no-deps --reinstall-package eng-drawing-viewer .
 Run $Py -c "import sys; print('    Python', sys.version.split()[0])"
+Run $Py -c "import PySide6.QtWidgets, pymupdf, pptx, win32com.client, numpy, cv2, pillow_heif, onnx, onnxruntime, ezdxf, defusedxml; print('    dependencies import')"
 
 Step "Fetching OCR language data (hash-checked)"
 Run $Py tools\fetch_tessdata.py "$Work\tessdata"
@@ -87,6 +88,10 @@ try {
     Pop-Location
 }
 
+Step "Collecting the build environment's licence files"
+if (Test-Path "build\legal-notices") { Remove-Item -Recurse -Force "build\legal-notices" }
+Run $Py packaging\collect_licenses.py build\legal-notices
+
 Step "Running PyInstaller"
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
 $env:ENG_VIEWER_TESSDATA = "$Work\tessdata"
@@ -102,7 +107,7 @@ Copy-Item LICENSE "$Dist\legal\LICENSE"
 Run $Py tools\collect_licenses.py $Dist --out "$Dist\legal\licenses" --sbom "$Out\$Base.cdx.json"
 
 if (-not $SkipSmokeTest) {
-    Step "Smoke test: start through the launcher, render a page in a worker process, run three PDF tools"
+    Step "Smoke test: start through the launcher, render a page in a worker process, run three PDF tools and the editors"
     $Smoke = Join-Path $Work "smoke"
     New-Item -ItemType Directory -Force $Smoke | Out-Null
     $Sample = Join-Path $Smoke "smoke test.pdf"
@@ -116,13 +121,16 @@ if (-not $SkipSmokeTest) {
         Remove-Item Env:\ENG_VIEWER_SMOKE_TEST, Env:\ENG_VIEWER_SMOKE_LOG
     }
     if (Test-Path $Log) { Get-Content $Log }
-    if ($p.ExitCode -ne 0 -or -not (Select-String -Quiet -Path $Log -Pattern "3 PDF tool jobs OK")) {
+    if ($p.ExitCode -ne 0 -or -not (Select-String -Quiet -Path $Log -Pattern "3 PDF tool jobs OK") -or
+        -not (Select-String -Quiet -Path $Log -SimpleMatch -Pattern '"original_unchanged": true')) {
         throw "Smoke test failed (exit code $($p.ExitCode))"
     }
 }
 
 Step "Checking the bundle"
-Run $Py tools\check_bundle.py $Dist --json "$Work\check_bundle.json"
+# A finding fails the build at the end, after the ZIP is packed, so one run shows everything.
+& $Py tools\check_bundle.py $Dist --json "$Work\check_bundle.json" --reviewed packaging\reviewed-upstream-findings.txt
+$CheckFailed = $LASTEXITCODE -ne 0
 
 Step "Packing the portable ZIP"
 Run $Py packaging\windows\make_zip.py $Dist "$Out\$Base-Portable.zip"
@@ -139,4 +147,5 @@ if ($Installer) {
 }
 
 Get-ChildItem $Out -File | ForEach-Object { "{0,10:N1} MB  {1}" -f ($_.Length / 1MB), $_.Name }
+if ($CheckFailed) { throw "The bundle check reported findings (see above and $Work\check_bundle.json)" }
 Step "Done: $Dist"

@@ -40,9 +40,32 @@ from .widgets import (
 
 ZOOM_PRESETS = [25, 50, 75, 100, 125, 150, 200, 300, 400, 800, 1600]
 
+# Files only the Image and Vector editors open; the viewer shows PDFs and images.
+EDITOR_EXTS = frozenset({".svg", ".dxf", ".engvec", ".engimg", ".avif"})
+
 
 class _ScanBridge(QObject):
     done = Signal(int, object)  # generation, ScanResult
+
+
+class WorkspaceControl(SegmentedControl):
+    """Workspace tabs. Image editing and vector editing each have their own tab."""
+
+    TABS = (
+        ("viewer", "Viewer", "viewer", "View drawings, MARK and queue pages"),
+        ("pdf_edit", "Edit PDF", "pen", "Edit text, objects and pages of a PDF"),
+        ("tools", "PDF Tools", "tools", "Organize, convert, optimize and secure PDFs"),
+        ("image", "Image", "image", "Layered image editor"),
+        ("vector", "Vector", "vector", "Vector editor: paths, shapes, SVG/DXF, tracing"),
+    )
+
+    def __init__(self):
+        super().__init__([tuple(t) for t in self.TABS], height=28)
+        self.setAccessibleName("Workspace")
+        self.setToolTip("")  # each tab has its own tooltip
+
+    def key_at(self, index: int) -> str:
+        return self.TABS[index][0]
 
 
 class _SaveRunnable(QRunnable):
@@ -186,6 +209,9 @@ class MainWindow(QMainWindow):
         self._unified = False
         self._mode = "viewer"
         self.tools = None  # PDF Tools workspace, created on first use
+        self.image_editor = None
+        self.vector_editor = None
+        self.pdf_editor = None
         self._continuity = None  # iPhone scanning (macOS), created on first use
         self._mark_after_open = False
 
@@ -308,8 +334,7 @@ class MainWindow(QMainWindow):
         self.btn_scan.setVisible(IS_MAC)
         lay.addWidget(self.btn_scan)
         lay.addSpacing(8)
-        self.mode_ctrl = SegmentedControl([("viewer", "Viewer", "viewer", "Drawing viewer"),
-                                           ("tools", "PDF Tools", "tools", "Edit, convert and compare PDFs")], height=28)
+        self.mode_ctrl = WorkspaceControl()
         self.mode_ctrl.changed.connect(self.set_mode)
         lay.addWidget(self.mode_ctrl)
         lay.addSpacing(10)
@@ -389,6 +414,9 @@ class MainWindow(QMainWindow):
         self.btn_inspector.toggled.connect(self._toggle_inspector)
         vl.addWidget(self.btn_inspector)
         lay.addWidget(self.viewer_controls)
+        self.workspace_queue = tool_button("presentation", "PowerPoint Queue")
+        self.workspace_queue.clicked.connect(lambda: (self.set_mode("viewer"), self._reveal_inspector()))
+        lay.addWidget(self.workspace_queue)
         return bar
 
     def _build_status(self) -> QWidget:
@@ -454,6 +482,10 @@ class MainWindow(QMainWindow):
         f = mb.addMenu("&File")
         self._act(f, "Open Folder…", self.open_folder_dialog, QKeySequence.StandardKey.Open, "folder-open")
         self._act(f, "Open Files…", self.open_files_dialog, "Ctrl+Shift+O", "file")
+        self._act(f, "Open in Image Editor…", self.open_image_editor, KEYS["image_editor"], "image")
+        self._act(f, "Open in Vector Editor…", self.open_vector_editor, KEYS["vector_editor"], "vector")
+        self._act(f, "Edit Current PDF…", self.open_pdf_editor, KEYS["pdf_editor"], "file-text")
+        self._act(f, "Edit Current Page as Image…", self.edit_page_as_image, None, "image")
         if IS_MAC:
             self._act(f, "Scan with iPhone…", lambda: self.start_scan(self.btn_scan), "Ctrl+Shift+I", "iphone")
         self.recent_menu = f.addMenu("Open Recent")
@@ -482,7 +514,10 @@ class MainWindow(QMainWindow):
         mg = QActionGroup(self)
         self.act_mode_viewer = self._act(v, "Viewer", lambda: self.set_mode("viewer"), KEYS["viewer"], checkable=False)
         self.act_mode_tools = self._act(v, "PDF Tools", lambda: self.set_mode("tools"), KEYS["tools"], checkable=False)
-        for a in (self.act_mode_viewer, self.act_mode_tools):
+        self.act_mode_image = self._act(v, "Image Editor", lambda: self.set_mode("image"))
+        self.act_mode_vector = self._act(v, "Vector Editor", lambda: self.set_mode("vector"))
+        self.act_mode_pdf_edit = self._act(v, "Edit PDF", lambda: self.set_mode("pdf_edit"))
+        for a in (self.act_mode_viewer, self.act_mode_tools, self.act_mode_image, self.act_mode_vector, self.act_mode_pdf_edit):
             a.setCheckable(True)
             mg.addAction(a)
         self.act_mode_viewer.setChecked(True)
@@ -562,6 +597,14 @@ class MainWindow(QMainWindow):
         self._act(h, "Keyboard Shortcuts", self.show_shortcuts, KEYS["shortcuts"], "keyboard")
         about = self._act(h, f"About {APP_NAME}", self.show_about, None, "info")
         about.setMenuRole(QAction.MenuRole.AboutRole)
+        if sys.platform.startswith("linux"):
+            from ..platform import linux
+
+            if linux.appimage_path() is not None:
+                # An AppImage is one file kept anywhere; desktop menus only list it on request.
+                h.addSeparator()
+                self.act_menu_entry = self._act(h, "Add to Applications Menu", self.toggle_menu_entry, None, "plus")
+                self._update_menu_entry_action()
         if not IS_MAC:
             assign_mnemonics(mb)
 
@@ -648,6 +691,10 @@ class MainWindow(QMainWindow):
         self._toolbar_layout.setContentsMargins(left, 0, 10, 0)
 
     def closeEvent(self, event):
+        for editor in (self.image_editor, self.vector_editor, self.pdf_editor):
+            if editor is not None and not editor.maybe_close():
+                event.ignore()
+                return
         for w in list(self._mark_windows.values()):
             if not w.close():
                 event.ignore()
@@ -667,13 +714,22 @@ class MainWindow(QMainWindow):
     def open_files_dialog(self):
         start = str(self.source_root) if self.source_root else str(Path.home())
         pats = " ".join(f"*{e}" for e in sorted({".pdf"} | IMAGE_EXTS))
-        files, _ = QFileDialog.getOpenFileNames(self, "Open drawings and images", start, f"PDFs and images ({pats})")
+        files, _ = QFileDialog.getOpenFileNames(self, "Open drawings and images", start, f"Documents ({pats} *.avif *.engimg *.svg *.dxf *.engvec)")
         if files:
             self.open_paths([Path(f) for f in files])
 
     def open_paths(self, paths: list[Path]):
         """Folders, PDFs or a mix (Finder open events, drag and drop, CLI)."""
         paths = [Path(p) for p in paths if Path(p).exists()]
+        vectors = [p for p in paths if p.suffix.lower() in (".svg", ".dxf", ".engvec")]
+        projects = [p for p in paths if p.suffix.lower() in (".engimg", ".avif")]
+        for p in vectors:
+            self.open_vector_editor(str(p))
+        for p in projects:
+            self.open_image_editor(str(p))
+        paths = [p for p in paths if p not in vectors and p not in projects]
+        if not paths:
+            return
         folders = [p for p in paths if p.is_dir()]
         pdfs = [p for p in paths if p.is_file() and is_document_name(p.name)]
         if folders:
@@ -820,6 +876,8 @@ class MainWindow(QMainWindow):
     def open_document(self, path: str, page: int = 0):
         if not path:
             return
+        if not self._is_image(path):
+            self.set_mode("viewer")
         self.doc_path = path
         self.library.select_path(path)
         self.title_label.setText(Path(path).name)
@@ -858,6 +916,8 @@ class MainWindow(QMainWindow):
         if self._mark_after_open:
             self._mark_after_open = False
             QTimer.singleShot(0, self.open_mark)
+        elif self._is_image(path):
+            self.open_image_editor(path)
 
     def _page_size(self, i: int) -> tuple[float, float]:
         if i < len(self.page_sizes):
@@ -1243,13 +1303,38 @@ class MainWindow(QMainWindow):
 
         AboutDialog(self.app_icon, self).exec()
 
+    def _update_menu_entry_action(self):
+        from ..platform import linux
+
+        installed = linux.menu_entry_installed()
+        self.act_menu_entry.setText("Remove from Applications Menu" if installed else "Add to Applications Menu")
+
+    def toggle_menu_entry(self):
+        from ..app import resource_path
+        from ..platform import linux
+
+        try:
+            if linux.menu_entry_installed():
+                linux.remove_menu_entry()
+                self.statusBar().showMessage(f"{APP_NAME} was removed from the applications menu.", 5000)
+            else:
+                appimage = linux.appimage_path()
+                if appimage is None:
+                    return
+                linux.install_menu_entry(appimage, resource_path("app_icon_512.png"))
+                self.statusBar().showMessage(
+                    f"{APP_NAME} is now in the applications menu. If you move the AppImage, add it again.", 8000)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"The applications menu could not be changed:\n{exc}")
+        self._update_menu_entry_action()
+
     # ========================================================= drag & drop
     def _dropped_paths(self, mime) -> list[Path]:
         out = []
         for u in mime.urls() if mime.hasUrls() else []:
             if u.isLocalFile():
                 p = Path(u.toLocalFile())
-                if p.is_dir() or is_document_name(p.name) or p.suffix.lower() in OFFICE_EXTS:
+                if p.is_dir() or is_document_name(p.name) or p.suffix.lower() in OFFICE_EXTS | EDITOR_EXTS:
                     out.append(p)
         return out
 
@@ -1272,6 +1357,17 @@ class MainWindow(QMainWindow):
         """Viewer: open PDFs, images and folders. Tools: feed the open tool. Office files: convert."""
         docs = [str(p) for p in paths if p.is_file() and is_document_name(p.name)]
         office = [str(p) for p in paths if p.is_file() and p.suffix.lower() in OFFICE_EXTS]
+        if self._mode in ("image", "vector"):
+            # The editors take images directly; the Vector tab also opens SVG, DXF and projects.
+            wanted = (".engimg", ".avif") if self._mode == "image" else (".svg", ".dxf", ".engvec")
+            files = [str(p) for p in paths if p.is_file() and (kind_for(p.name) == "image" or p.suffix.lower() in wanted)]
+            if files:
+                if self._mode == "image":
+                    self.image_editor._opening.extend(files[1:])
+                    self.image_editor.open_file(files[0])
+                else:
+                    self.vector_editor.open_file(files[0])
+                return
         if self._mode == "tools" and self.tools is not None:
             if (docs or office) and self.tools.drop_files(docs + office):
                 return
@@ -1288,19 +1384,76 @@ class MainWindow(QMainWindow):
         return bool(path) and kind_for(path) == "image"
 
     def set_mode(self, mode: str):
-        mode = "tools" if mode == "tools" else "viewer"
+        mode = mode if mode in ("viewer", "tools", "image", "vector", "pdf_edit") else "viewer"
         if mode == "tools" and self.tools is None:
             from .tools.workspace import ToolsWorkspace
 
             self.tools = ToolsWorkspace(self)
             self.content_stack.addWidget(self.tools)
+        if mode == "image" and self.image_editor is None:
+            from .image_editor.workspace import ImageWorkspace
+            self.image_editor = ImageWorkspace(self)
+            self.content_stack.addWidget(self.image_editor)
+        if mode == "vector" and self.vector_editor is None:
+            from .vector_editor.workspace import VectorWorkspace
+            self.vector_editor = VectorWorkspace(self)
+            self.content_stack.addWidget(self.vector_editor)
+        if mode == "pdf_edit" and self.pdf_editor is None:
+            from .pdf_editor.workspace import PdfEditWorkspace
+            self.pdf_editor = PdfEditWorkspace(self)
+            self.content_stack.addWidget(self.pdf_editor)
         self._mode = mode
-        self.content_stack.setCurrentWidget(self.tools if mode == "tools" else self.viewer_split)
+        self.content_stack.setCurrentWidget({"viewer": self.viewer_split, "tools": self.tools,
+            "image": self.image_editor, "vector": self.vector_editor, "pdf_edit": self.pdf_editor}[mode])
         self.viewer_controls.setVisible(mode == "viewer")
         self.mode_ctrl.set_current(mode, animate=True)
-        (self.act_mode_tools if mode == "tools" else self.act_mode_viewer).setChecked(True)
-        self.title_label.setText("" if mode == "tools" else (Path(self.doc_path).name if self.doc_path else ""))
+        {"viewer": self.act_mode_viewer, "tools": self.act_mode_tools, "image": self.act_mode_image,
+         "vector": self.act_mode_vector, "pdf_edit": self.act_mode_pdf_edit}[mode].setChecked(True)
+        self.title_label.setText((Path(self.doc_path).name if self.doc_path else "") if mode == "viewer" else "")
         self._update_nav()
+
+    def open_image_editor(self, path=None):
+        self.set_mode("image")
+        if isinstance(path, str) and path:
+            self.image_editor.open_file(path)
+        else:
+            self.image_editor.open_dialog()
+
+    def open_vector_editor(self, path=None):
+        self.set_mode("vector")
+        if isinstance(path, str) and path:
+            self.vector_editor.open_file(path)
+        else:
+            self.vector_editor.open_dialog()
+
+    def open_vector_image(self, image):
+        self.set_mode("vector")
+        self.vector_editor.import_image(image)
+
+    def open_pdf_editor(self, path=None):
+        self.set_mode("pdf_edit")
+        path = path if isinstance(path, str) else self.doc_path
+        if path and Path(path).suffix.lower() == ".pdf":
+            self.pdf_editor.open_file(path)
+        else:
+            self.pdf_editor.open_dialog()
+
+    def edit_page_as_image(self):
+        if not self.doc_path or not self.page_count:
+            return
+        w, h = self._page_size(self.page_index)
+        job = FullPageRender(self.render, self.doc_path, self.page_index, w, h, self._quality_dpi(), True, parent=self,
+                             native=self._is_image(self.doc_path))
+        self._image_page_job = job
+        name = f"{Path(self.doc_path).stem} — page {self.page_index + 1}"
+        def done(image):
+            from .image_editor.common import from_qimage
+            self.set_mode("image")
+            self.image_editor.open_image(from_qimage(image), name)
+            self._image_page_job = None
+        job.finished.connect(done)
+        job.failed.connect(lambda message: self.toast.show_message(message, "warning"))
+        job.start()
 
     def open_tool(self, tool_id: str, inputs: list[str] | None = None):
         self.set_mode("tools")

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Download the exact source code of the copyleft components inside the Mac app.
+"""Download the exact source code of the copyleft components inside the apps.
 
     python tools/fetch_third_party_sources.py release/sources
 
-The app bundles libraries under the GNU LGPL and AGPL (Qt and Qt for Python, MuPDF and PyMuPDF,
-GNU libiconv inside lxml). Each release publishes these upstream source archives next to the app,
-so anyone can rebuild or modify them. Downloads resume after interruptions and are checked against
+The apps bundle libraries under the GNU LGPL, GPL and AGPL (Qt and Qt for Python, MuPDF and PyMuPDF,
+GNU libiconv inside lxml, libheif, libde265 and x265 inside pillow-heif, and on Linux libfuse inside
+the AppImage runtime). Each release publishes these upstream source archives, or points to the
+earlier release that already carries the identical archive, so anyone can rebuild or modify them.
+The Windows-only libiconv build inputs (lxml's Windows packages) are listed in the 2.2.1 release. Downloads resume after interruptions and are checked against
 the checksum each project publishes (Qt publishes MD5 sums; the others SHA-256).
 """
 from __future__ import annotations
@@ -41,6 +43,21 @@ SOURCES = [
      "3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8", "GNU libiconv 1.18 (inside lxml)"),
     ("pyinstaller-6.22.3.tar.gz", f"{PYPI}/p/pyinstaller/pyinstaller-6.22.3.tar.gz", "sha256",
      "05eb2f5615503e72939a7224d68b4aff572c6b0438ee4a17d0a4b481f399362d", "PyInstaller 6.22.3, including the bootloader"),
+    # 2.3.0: the HEIF stack inside pillow-heif (all editions), the AppImage runtime (Linux) and the
+    # OpenCV source release the Mac editions are built from (Apache-2.0; with packaging/opencv/).
+    ("pillow_heif-1.8.1.tar.gz", f"{PYPI}/p/pillow_heif/pillow_heif-1.8.1.tar.gz", "sha256",
+     "521ebffb8a181d56c3904e5a61f20903edee0d9d3275967b8fb345f866215c06", "pillow-heif 1.8.1 and its library build recipes"),
+    ("libheif-1.23.6.tar.gz", "https://github.com/strukturag/libheif/releases/download/v1.23.6/libheif-1.23.6.tar.gz",
+     "sha256", None, "libheif 1.23.6 (LGPL-3.0), inside pillow-heif"),
+    ("libde265-1.1.3.tar.gz", "https://github.com/strukturag/libde265/releases/download/v1.1.3/libde265-1.1.3.tar.gz",
+     "sha256", None, "libde265 1.1.3 (LGPL-3.0), inside pillow-heif"),
+    ("x265-4.3.tar.gz", "https://github.com/Multicorewareinc/x265/archive/refs/tags/4.3.tar.gz", "sha256", None,
+     "x265 4.3 (GPL-2.0-or-later), inside pillow-heif"),
+    ("appimage-type2-runtime-20251108.tar.gz", "https://github.com/AppImage/type2-runtime/archive/refs/tags/20251108.tar.gz",
+     "sha256", None, "AppImage type 2 runtime 20251108 (MIT; builds the statically linked libfuse 3, LGPL-2.1)"),
+    ("opencv_python_headless-5.0.0.93.tar.gz", f"{PYPI}/o/opencv-python-headless/opencv_python_headless-5.0.0.93.tar.gz",
+     "sha256", "b82f9831daab90b725c7c1ee1b36cb5732c367096ac76d119e64e14eb70d5f3c",
+     "OpenCV 5.0.0.93 source release (Apache-2.0) of the Mac editions' minimal build"),
 ]
 
 
@@ -88,7 +105,7 @@ def main():
         print(f"{name}: {note}")
         lines.append(f"{sha}  {name}  # {what}; {url}")
     (dest / "THIRD_PARTY_SOURCES.txt").write_text(
-        "Source code of the copyleft components bundled in the ENG Drawing Viewer Mac app,\n"
+        "Source code of the copyleft components bundled in ENG Drawing Viewer,\n"
         "exactly as published by their projects. SHA-256, file, description and origin:\n\n"
         + "\n".join(lines) + "\n")
     for f in dest.glob("md5sums-*.txt"):

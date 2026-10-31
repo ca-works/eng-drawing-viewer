@@ -113,7 +113,7 @@ def test_source_has_no_network_imports():
     root = Path(__file__).parents[1] / 'src'
     forbidden = {'socket', 'urllib', 'http', 'requests', 'httpx', 'webbrowser'}
     for path in root.rglob('*.py'):
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             names = [a.name for a in node.names] if isinstance(node, ast.Import) else ([node.module or ''] if isinstance(node, ast.ImportFrom) else [])
             assert not any(n.split('.')[0] in forbidden for n in names), path
 

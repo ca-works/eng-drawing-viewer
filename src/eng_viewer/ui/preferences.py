@@ -63,6 +63,12 @@ class PreferencesDialog(QDialog):
         grid.addWidget(self.quality, r, 1, Qt.AlignmentFlag.AlignLeft)
         r += 1
 
+        grid.addWidget(label("Image clipboard", "secondary"), r, 0, Qt.AlignmentFlag.AlignRight)
+        clipboard = secondary_button("Format and options…", "copy-image")
+        clipboard.clicked.connect(self._clipboard_options)
+        grid.addWidget(clipboard, r, 1, Qt.AlignmentFlag.AlignLeft)
+        r += 1
+
         grid.addWidget(label("Library", "secondary"), r, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         lib = QVBoxLayout()
         lib.setSpacing(2)
@@ -96,7 +102,7 @@ class PreferencesDialog(QDialog):
             r += 1
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
-        lay.addWidget(label("ENG Drawing Viewer works entirely offline. Nothing is uploaded, and PDFs are never modified.", "tertiary", wrap=True))
+        lay.addWidget(label("ENG Drawing Viewer works entirely offline. Nothing is uploaded. Editing saves to a separate file.", "tertiary", wrap=True))
         b = QHBoxLayout()
         b.addStretch(1)
         done = primary_button("Done")
@@ -108,6 +114,13 @@ class PreferencesDialog(QDialog):
     def _refresh_cache_info(self):
         mb = self.win.thumbs.cache_size_bytes() / (1024 * 1024)
         self.cache_info.setText(f"Thumbnail cache: {mb:.1f} MB")
+
+    def _clipboard_options(self):
+        from .image_editor.clipboard_dialog import ClipboardDialog
+        dialog = ClipboardDialog(self.settings.get("image_clipboard", {}), True, self, preferences_only=True)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.settings.set("image_clipboard", dialog.options())
+            self.settings.save()
 
     def _cache_toggled(self, on: bool):
         self.settings.set("thumbnail_disk_cache", on)

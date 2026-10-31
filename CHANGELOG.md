@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.3.0 — four editions: macOS Universal, macOS Apple Silicon, Windows x64, Linux x86-64
+
+One version for every platform, built from the same source. Includes the Windows rebuild that was
+published as the 2.2.1 Windows Preview (below) and brings its shared fixes to the other platforms.
+
+### New
+- **Image, Vector and Edit PDF workspaces**, each on its own tab next to the Viewer and PDF Tools:
+  layered image editing with selections, masks, Magic Eraser, healing and offline AI model packs;
+  editable SVG/DXF vector geometry with raster tracing; PDF text boxes, shapes, images, real
+  redaction, page crop/rotate and Save As (see docs/IMAGE_EDITOR.md, VECTOR_EDITOR.md, PDF_EDITOR.md).
+- **Linux edition** (x86-64 AppImage): native Wayland or X11, desktop-portal file dialogs, Show in
+  File Manager selects the file, *Help › Add to Applications Menu*, HEIC/HEIF photos through the
+  bundled libheif, OCR with bundled Tesseract language data, Ctrl+Q to quit.
+- **macOS Universal edition** (Intel and Apple Silicon in one app) next to the Apple Silicon edition.
+
+### Faster
+- The interface stays responsive while pages render on busy machines: the longest pause with three
+  render workers at full load dropped from 190–640 ms to 10–22 ms (measured on Linux; the change
+  applies to macOS too). Page pixels now arrive in display format and are shown without a copy.
+
+### Fixed
+- The licence collector counts the editors' self-test module as part of the app (Windows and macOS
+  release builds would have stopped on it).
+
+### Security and privacy
+- Every Mac edition ships a minimal OpenCV (core, imgproc, photo) built from the official source
+  release, without FFmpeg, OpenSSL, libssh or image codecs.
+
 ## 2.2.1 — Windows release
 
 ENG Drawing Viewer for Windows 10 and 11 (x64), rebuilt as a standalone app: a portable ZIP and a per-user installer that needs no administrator rights. The Mac app gets the shared fixes below.

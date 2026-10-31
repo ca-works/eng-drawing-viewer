@@ -2,7 +2,7 @@
 ; Copyright © 2026 ca-works
 ;
 ; Per-user installer for ENG Drawing Viewer (Inno Setup 6). Built by build_windows.ps1 -Installer:
-;   iscc /DAppVersion=2.2.0 /DSourceDir=<app folder> /DOutputDir=<folder> /DOutputName=<name> /DRepoRoot=<repo> installer.iss
+;   iscc /DAppVersion=<version> /DSourceDir=<app folder> /DOutputDir=<folder> /DOutputName=<name> /DRepoRoot=<repo> installer.iss
 ;
 ; Installs into %LOCALAPPDATA%\Programs\ENG Drawing Viewer without administrator rights, adds a
 ; Start menu shortcut and "Open with" entries for PDFs and images (it never takes over the default

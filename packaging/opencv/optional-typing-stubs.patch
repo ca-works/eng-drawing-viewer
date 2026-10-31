@@ -1,0 +1,14 @@
+--- a/setup.py
++++ b/setup.py
+@@ -445,7 +445,10 @@
+                     del m, fslash_relpath, new_install_relpath
+                 else:
+                     # gapi can be missed if ADE was not downloaded (network issue)
+-                    if not found and "gapi" not in relpath_re:
++                    # ENG Drawing Viewer: so can the typing stubs, which a BUILD_LIST build of a few
++                    # modules cannot generate (they are for editors and type checkers only).
++                    if not found and "gapi" not in relpath_re and "py.typed" not in relpath_re \
++                            and "/typing/" not in relpath_re:
+                         raise Exception("Not found: '%s'" % relpath_re)
+                 del r, found
+ 
