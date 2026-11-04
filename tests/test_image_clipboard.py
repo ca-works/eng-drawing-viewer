@@ -47,19 +47,19 @@ def test_native_windows_alpha_bitmap_header():
 @pytest.mark.skipif(sys.platform != 'darwin', reason='macOS native pasteboard')
 def test_macos_actual_selected_flavor(qapp):
     from AppKit import NSPasteboard, NSImage
-    pb = NSPasteboard.generalPasteboard()
+    # A private named pasteboard: tests never replace what the user copied.
+    pb = NSPasteboard.pasteboardWithUniqueName()
     if pb is None:
         pytest.skip('native pasteboard unavailable in restricted session')
-    for fmt, uti in [('PNG', 'public.png'), ('JPEG', 'public.jpeg'), ('TIFF', 'public.tiff'), ('BMP', 'com.microsoft.bmp')]:
-        payload = prepare_clipboard(Image.new('RGBA', (12, 9), (45, 90, 180, 100)), {'format': fmt})
-        write_clipboard(payload)
-        assert bytes(pb.dataForType_(uti)) == payload.data
-        assert pb.dataForType_('public.png') is not None
-        assert pb.dataForType_('public.tiff') is not None
-        native_image = NSImage.alloc().initWithPasteboard_(pb)
-        assert native_image is not None
-        assert native_image.representations()[0].pixelsWide() == 12
-        # Qt's offscreen platform deliberately has a private, in-memory clipboard.
-        if qapp.platformName() == 'cocoa':
-            qapp.processEvents()
-            assert not qapp.clipboard().image().isNull()
+    try:
+        for fmt, uti in [('PNG', 'public.png'), ('JPEG', 'public.jpeg'), ('TIFF', 'public.tiff'), ('BMP', 'com.microsoft.bmp')]:
+            payload = prepare_clipboard(Image.new('RGBA', (12, 9), (45, 90, 180, 100)), {'format': fmt})
+            write_clipboard(payload, pasteboard=pb)
+            assert bytes(pb.dataForType_(uti)) == payload.data
+            assert pb.dataForType_('public.png') is not None
+            assert pb.dataForType_('public.tiff') is not None
+            native_image = NSImage.alloc().initWithPasteboard_(pb)
+            assert native_image is not None
+            assert native_image.representations()[0].pixelsWide() == 12
+    finally:
+        pb.releaseGlobally()

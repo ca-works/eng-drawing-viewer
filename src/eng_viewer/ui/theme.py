@@ -145,6 +145,29 @@ def make_theme(dark: bool, accent: str) -> Theme:
     )
 
 
+def _chevron_file(color: str) -> str:
+    """A combo-box arrow as a small SVG file, since style sheets take images only as files.
+
+    A vector image stays crisp at every scale and sits on the arrow area's centre line,
+    unlike a text glyph whose baseline differs between fonts.
+    """
+    from ..core import config
+
+    c = qc(color)
+    name = f"chevron-down-{c.name(QColor.NameFormat.HexRgb)[1:]}-{round(c.alphaF() * 100)}.svg"
+    path = config.cache_dir() / "ui" / name
+    if not path.exists():
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">'
+               f'<path d="M2 3.75l3 3 3-3" fill="none" stroke="{c.name(QColor.NameFormat.HexRgb)}" '
+               f'stroke-opacity="{c.alphaF():.2f}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(svg, encoding="utf-8")
+        except OSError:
+            return ""
+    return path.as_posix()
+
+
 def build_stylesheet(t: Theme, base_pt: float, native_mac_style: bool = IS_MAC) -> str:
     small = max(9.0, base_pt - 2)
     tiny = max(8.5, base_pt - 2.5)
@@ -252,8 +275,15 @@ QMenu::item {{ padding: 5px 22px 5px 10px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {t.accent}; color: #FFFFFF; }}
 QMenu::item:disabled {{ color: {t.text_disabled}; }}
 QMenu::separator {{ height: 1px; background: {t.separator}; margin: 4px 6px; }}
-QComboBox {{ background: {t.control}; color: {t.text}; border: 1px solid {t.control_border}; border-radius: 6px; padding: 3px 8px; }}
+QComboBox {{
+    background: {t.control}; color: {t.text}; border: 1px solid {t.control_border}; border-radius: 6px;
+    padding: 3px 26px 3px 8px; min-height: 18px;
+}}
 QComboBox:hover {{ border-color: {t.accent}; }}
+QComboBox:disabled {{ color: {t.text_disabled}; }}
+QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right; width: 22px; border: none; }}
+QComboBox::down-arrow {{ image: url("{_chevron_file(t.text_secondary)}"); width: 10px; height: 10px; }}
+QComboBox::down-arrow:disabled {{ image: url("{_chevron_file(t.text_disabled)}"); }}
 QComboBox QAbstractItemView {{ background: {t.elevated}; color: {t.text}; selection-background-color: {t.accent}; border: 1px solid {t.separator}; }}
 QSpinBox, QDoubleSpinBox {{ background: {t.field}; color: {t.text}; border: 1px solid {t.field_border}; border-radius: 6px; padding: 2px 6px; }}
 """

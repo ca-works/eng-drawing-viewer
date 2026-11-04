@@ -8,8 +8,8 @@
 #   PYTHON  the interpreter to build for (its architecture is the wheel's architecture; on an Apple
 #           Silicon Mac run an x86_64 interpreter under Rosetta to build the Intel wheel, and set
 #           OPENCV_OSX_ARCH=x86_64 so the compiler targets it explicitly)
-#   LOCK    the edition's lock (packaging/requirements-macos.txt): gives the OpenCV and numpy
-#           versions and the SHA-256 of the source release
+#   LOCK    the edition's lock (packaging/requirements-<platform>.txt): gives the OpenCV and numpy
+#           versions (and the source release's SHA-256 unless SOURCE_LOCK names another lock)
 #
 # Those three modules are all the app uses (cv2 calls in src/ and tools/). Leaving everything else
 # out means no FFmpeg, OpenSSL, libssh, ZeroMQ or image codecs inside OpenCV, and two builds from the
@@ -20,10 +20,15 @@ set -euo pipefail
 
 PYTHON="$1"; LOCK="$2"; OUT="$(mkdir -p "$3" && cd "$3" && pwd)"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="$(mktemp -d)"
+# A fixed, neutral build folder: OpenCV keeps its source file paths (in assertion messages), so a
+# temporary folder's machine-specific name would end up in cv2.
+WORK="${OPENCV_WORK:-/tmp/eng-drawing-viewer-build/opencv-$(uname -m)}"
+rm -rf "$WORK" && mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
-read -r VERSION SDIST_SHA URL < <("$PYTHON" - "$LOCK" <<'PYEOF'
+# The source release's hash comes from SOURCE_LOCK (default: LOCK). The Linux and Windows locks pin
+# only wheels, so their builds pass the macOS lock, which pins the same version's source release.
+read -r VERSION SDIST_SHA URL < <("$PYTHON" - "${SOURCE_LOCK:-$LOCK}" <<'PYEOF'
 import json, re, sys, urllib.request
 lock = open(sys.argv[1], encoding="utf-8").read()
 block = re.search(r"^opencv-python-headless==(\S+)(.*?)(?=^\S)", lock + "\nend", re.S | re.M)
@@ -37,7 +42,8 @@ PYEOF
 )
 echo "==> OpenCV $VERSION source (SHA-256 $SDIST_SHA)"
 curl -fsSL --retry 3 -o "$WORK/src.tar.gz" "$URL"
-echo "$SDIST_SHA  $WORK/src.tar.gz" | shasum -a 256 -c - >/dev/null
+if command -v sha256sum >/dev/null; then SUM=(sha256sum); else SUM=(shasum -a 256); fi
+echo "$SDIST_SHA  $WORK/src.tar.gz" | "${SUM[@]}" -c - >/dev/null
 tar xzf "$WORK/src.tar.gz" -C "$WORK"
 # A build of a few modules can't generate the typing stubs (for editors and type checkers only); the
 # wheel recipe would stop on the missing files.
@@ -46,6 +52,7 @@ patch -s -p1 -d "$WORK/opencv_python_headless-$VERSION" < "$ROOT/packaging/openc
 echo "==> Build environment for $("$PYTHON" -c 'import platform, sys; print(platform.machine(), sys.version.split()[0])')"
 "$PYTHON" -m venv "$WORK/venv"
 VPY="$WORK/venv/bin/python"
+[[ -x "$VPY" ]] || VPY="$WORK/venv/Scripts/python.exe"  # Windows
 "$PYTHON" - "$LOCK" "$WORK/numpy.txt" <<'PYEOF'
 import re, sys
 lock = open(sys.argv[1], encoding="utf-8").read()
@@ -57,7 +64,7 @@ PYEOF
 
 echo "==> Building (core, imgproc, photo)"
 export ENABLE_HEADLESS=1
-export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(getconf _NPROCESSORS_ONLN)}"
+export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 # Nothing is downloaded during the build (IPP and ITT fetch binaries) and no optional backend is used.
 # Java/JNI detection is off: OpenCV records what CMake finds in its build information string, so a
@@ -70,11 +77,13 @@ export CMAKE_ARGS="-DBUILD_LIST=core,imgproc,photo,python3 -DWITH_FFMPEG=OFF -DW
 -DBUILD_JAVA=OFF -DBUILD_opencv_java_bindings_generator=OFF -DCMAKE_DISABLE_FIND_PACKAGE_JNI=ON \
 -DCMAKE_DISABLE_FIND_PACKAGE_Java=ON -DCMAKE_DISABLE_FIND_PACKAGE_Ant=ON \
 -DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET${OPENCV_OSX_ARCH:+ -DCMAKE_OSX_ARCHITECTURES=$OPENCV_OSX_ARCH}"
+# Linux: cv2 links only system libraries, so it needs no RPATH (the build would record its own folder).
+[[ "$(uname -s)" == Linux ]] && CMAKE_ARGS+=" -DCMAKE_SKIP_RPATH=ON"
 (cd "$WORK/opencv_python_headless-$VERSION" && "$VPY" -m pip wheel . --no-build-isolation --no-deps -w "$OUT")
 "$VPY" - "$OUT" <<'PYEOF'
 import re, sys, zipfile, pathlib
 # No home-folder path of the build machine may end up in the wheel (build information, debug data).
-home = re.compile(rb"/(?:Users|home)/(?!runner/)[A-Za-z0-9_.-]+/")
+home = re.compile(rb"/(?:Users|home)/(?!runner/|runneradmin/)[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]+Users[\\/]+(?!runneradmin|username\b|user\b)[^\\/\0]+", re.I)
 for whl in pathlib.Path(sys.argv[1]).glob("opencv_python_headless-*.whl"):
     z = zipfile.ZipFile(whl)
     names = z.namelist()

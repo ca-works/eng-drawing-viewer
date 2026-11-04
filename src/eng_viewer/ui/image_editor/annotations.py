@@ -33,6 +33,10 @@ def render_transformed_annotation(props):
             image = canvas
         elif op[0] == "rotate":
             image = image.rotate(op[1], Image.Resampling.BICUBIC, expand=True)
+        elif op[0] == "affine":
+            from ...core.image_document import warp
+            _dimensions(op[7], op[8])
+            image = warp(image, op[1:7], (op[7], op[8]))
         elif op[0] == "flip":
             image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT if op[1] else Image.Transpose.FLIP_TOP_BOTTOM)
         else:

@@ -106,6 +106,12 @@ for the launcher, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the 
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1            # -Installer for Setup.exe
 ```
 
+For a release, first build the minimal OpenCV in Git Bash with Visual Studio's C++ build tools
+(`SOURCE_LOCK=packaging/requirements-macos.txt OPENCV_WORK=C:/ocv tools/build_opencv_minimal.sh
+<python.exe> packaging/requirements-windows.txt build/opencv`) and set `OPENCV_WHEEL` to the wheel
+before running the script; the published wheel bundles FFmpeg (`opencv_videoio_ffmpeg`). The
+`editions` workflow does both.
+
 The script creates `.venv-build` with CPython 3.13.16, installs the Windows lock, downloads the
 Tesseract language data (hash-checked), builds the launcher (Go, no third-party modules, `-trimpath`),
 runs PyInstaller, collects the licence texts and a CycloneDX SBOM, smoke-tests the app through the
@@ -134,6 +140,24 @@ sudo apt-get install binutils squashfs-tools gpgv gnupg desktop-file-utils xvfb 
   libwayland-client0 libwayland-cursor0 libwayland-egl1
 packaging/linux/build_linux.sh            # RUN_TESTS=1 also runs the tests; SKIP_APPIMAGE=1 stops at the AppDir
 ```
+
+Release builds use the minimal OpenCV (core, imgproc, photo) instead of the published wheel, which
+bundles FFmpeg and OpenSSL 1.1.1. Build the wheel on **Rocky Linux 9** (glibc 2.34, GCC 11), the
+oldest supported system, so it needs nothing newer than the AppImage's minimum (built on Ubuntu
+22.04 it would need glibc 2.35 and GLIBCXX 3.4.30). It needs `gcc-c++ make patch` and Python 3.13.16:
+
+```sh
+SOURCE_LOCK=packaging/requirements-macos.txt tools/build_opencv_minimal.sh \
+  "$(uv python find 3.13.16)" packaging/requirements-linux.txt build/opencv      # on Rocky Linux 9
+OPENCV_WHEEL="$PWD/build/opencv/opencv_python_headless-5.0.0.93-cp313-cp313-linux_x86_64.whl" \
+  RUN_TESTS=1 packaging/linux/build_linux.sh                                    # on Ubuntu 22.04
+```
+
+`SOURCE_LOCK` supplies the source release's SHA-256 (the Linux and Windows locks pin only wheels).
+Neither system needs to be a real machine: the 2.3.0 AppImage was built on an Apple silicon Mac in a
+free Lima VM, with Ubuntu's official `ubuntu-base` 22.04 and Rocky's official container root
+filesystem as x86-64 chroots run by Rosetta 2. A build from the source archive has no git; set
+`SOURCE_COMMIT` to record the commit in `build-report.json`.
 
 The script installs the Linux lock, fetches the Tesseract data, runs PyInstaller
 (`packaging/linux/ENG_Drawing_Viewer_linux.spec`), assembles an AppDir (`AppRun`, desktop entry,

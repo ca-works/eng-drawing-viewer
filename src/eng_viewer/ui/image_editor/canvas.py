@@ -1,18 +1,54 @@
-"""Source-resolution image viewport; geometry is always in source pixels."""
+"""Source-resolution image viewport; geometry is always in source pixels.
+
+With the Move tool the active layer shows a transform frame: drag inside to move it,
+drag a handle to scale (corners keep proportions; Shift frees them, Option/Alt scales
+from the centre) and drag the knob above the frame, or just outside a corner, to rotate
+(Shift: 15° steps). While dragging, the layers below and above are shown separately so
+the layer moves live; the change is applied as one undoable step on release.
+"""
 from __future__ import annotations
 
 import math
 
 from PIL import Image
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, QEvent
-from PySide6.QtGui import QColor, QBrush, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QBrush, QCursor, QFont, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
+from .. import icons
 from ..rulers import RULER, grid_step, paint_grid, paint_rulers, ruler_steps
+from ..theme import IS_MAC
+from . import transform as TF
 from .common import to_qimage
+
+SNAP_COLOR = QColor("#ff2fd0")
+FRAME_COLOR = QColor("#2f8cff")
 
 BRUSH_TOOLS = {"pen", "highlighter", "eraser", "background", "restore", "quick", "clone", "heal"}
 DRAG_TOOLS = BRUSH_TOOLS | {"rect", "ellipse", "lasso", "crop", "move", "arrow", "circle", "shape"}
+CLICK_TOOLS = ("wand", "color", "text", "bubble", "magic", "bucket")
+TOOL_KEYS = {Qt.Key.Key_V: "move", Qt.Key.Key_M: "rect", Qt.Key.Key_L: "lasso", Qt.Key.Key_W: "wand",
+             Qt.Key.Key_Q: "quick", Qt.Key.Key_C: "crop", Qt.Key.Key_B: "pen", Qt.Key.Key_E: "eraser",
+             Qt.Key.Key_S: "clone", Qt.Key.Key_J: "heal", Qt.Key.Key_T: "text", Qt.Key.Key_U: "shape",
+             Qt.Key.Key_X: "magic", Qt.Key.Key_G: "bucket"}
+
+
+def qtransform(matrix):
+    a, b, c, d, e, f = matrix
+    return QTransform(a, d, b, e, c, f)
+
+
+def _rotate_cursor():
+    pixmap = icons.pixmap("refresh", 20, QColor("#111111"), dpr=2.0, stroke=2.2)
+    halo = QPixmap(pixmap.size())
+    halo.setDevicePixelRatio(pixmap.devicePixelRatio())
+    halo.fill(Qt.GlobalColor.transparent)
+    p = QPainter(halo)
+    white = icons.pixmap("refresh", 20, QColor("#ffffff"), dpr=2.0, stroke=4.2)
+    p.drawPixmap(0, 0, white)
+    p.drawPixmap(0, 0, pixmap)
+    p.end()
+    return QCursor(halo, 10, 10)
 
 
 class ImageCanvas(QGraphicsView):
@@ -22,6 +58,9 @@ class ImageCanvas(QGraphicsView):
     toolRequested = Signal(str)
     actionRequested = Signal(str)
     guidesChanged = Signal(object)
+    transformFinished = Signal(str, object)  # ("move", (dx, dy)) or ("affine", matrix)
+    layerPickRequested = Signal(float, float)  # handled synchronously: may change layer_frame
+    nudgeRequested = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,8 +96,24 @@ class ImageCanvas(QGraphicsView):
         self.dpi = 96
         self.guides = []
         self._guide_drag = None
-        self.snap = False
+        self.snap = True
         self.busy = False
+        # Move tool: the active layer's frame (cx, cy, w, h, degrees) and live preview.
+        self.layer_frame = None
+        self.layer_editable = True
+        self.auto_select = True
+        self.preview_provider = None  # () -> (below QImage|None, layer QImage, (x, y), above QImage|None)
+        self.snap_provider = None  # () -> (x targets, y targets)
+        self._drag = None
+        self._snap_lines = []
+        self._rotate_cursor = None
+        self.preview_items = []
+        for z in (1, 2, 3):
+            item = self.scene_.addPixmap(QPixmap())
+            item.setZValue(z)
+            item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+            item.setVisible(False)
+            self.preview_items.append(item)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._animate)
         self._timer.start(110)
@@ -75,9 +130,51 @@ class ImageCanvas(QGraphicsView):
         self._image_size = image.size
         self.item.setPixmap(QPixmap.fromImage(to_qimage(image)))
         self.scene_.setSceneRect(0, 0, *image.size)
+        self.end_preview()
         if fit or old == (0, 0):
             self.fit_image()
         self.viewport().update()
+
+    def clear_image(self):
+        self.end_preview()
+        self.item.setPixmap(QPixmap())
+        self._image_size = (0, 0)
+        self.layer_frame = None
+        self.viewport().update()
+
+    def set_layer_frame(self, frame, editable=True):
+        self.layer_frame = frame
+        self.layer_editable = editable
+        self.viewport().update()
+
+    # ------------------------------------------------------- live layer preview
+    def begin_preview(self):
+        """Split the picture into layers below / the active layer / layers above."""
+        if self.preview_provider is None:
+            return False
+        parts = self.preview_provider()
+        if parts is None:
+            return False
+        below, layer, (x, y), above = parts
+        for item, image in zip(self.preview_items, (below, layer, above)):
+            item.setPixmap(QPixmap.fromImage(image) if image is not None else QPixmap())
+            item.setTransform(QTransform())
+            item.setVisible(image is not None)
+        self.preview_items[1].setOffset(x, y)
+        self.item.setVisible(False)
+        return True
+
+    def end_preview(self):
+        if self._drag is not None:
+            self._drag = None
+        self._snap_lines = []
+        for item in self.preview_items:
+            item.setVisible(False)
+            item.setPixmap(QPixmap())
+        self.item.setVisible(True)
+
+    def _preview_transform(self, matrix):
+        self.preview_items[1].setTransform(qtransform(matrix))
 
     def set_selection(self, mask):
         self._selection = QPainterPath()
@@ -104,11 +201,13 @@ class ImageCanvas(QGraphicsView):
             self.viewport().update()
 
     def set_tool(self, tool):
+        if self._drag is not None:
+            self.end_preview()
         self.tool = tool
         self._points = []
         self._polygon = []
         self._down = False
-        self.setCursor(Qt.CursorShape.OpenHandCursor if tool == "move" else Qt.CursorShape.CrossCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor if tool == "move" else Qt.CursorShape.CrossCursor)
         self.viewport().update()
 
     def fit_image(self):
@@ -148,6 +247,13 @@ class ImageCanvas(QGraphicsView):
             return True
         return super().event(event)
 
+    def _zoom(self):
+        return max(self.transform().m11(), .01)
+
+    def _free_point(self, event):
+        """Scene point without clamping (layers may extend past the canvas)."""
+        return self.mapToScene(event.position().toPoint())
+
     def _point(self, event):
         p = self.mapToScene(event.position().toPoint())
         w, h = self._image_size
@@ -183,10 +289,13 @@ class ImageCanvas(QGraphicsView):
             self._polygon.append(p)
             self.viewport().update()
             return
-        if self.tool in ("wand", "color", "text", "bubble", "magic"):
+        if self.tool in CLICK_TOOLS:
             self.gesture.emit(self.tool, [(p.x(), p.y())], event.modifiers())
             return
         if event.button() != Qt.MouseButton.LeftButton:
+            return
+        if self.tool == "move":
+            self._start_layer_drag(event)
             return
         self._down = True
         self._points = [p]
@@ -202,7 +311,118 @@ class ImageCanvas(QGraphicsView):
                     break
         event.accept()
 
+    # ------------------------------------------------------------ Move tool
+    def _snap_enabled(self, modifiers):
+        held = modifiers & (Qt.KeyboardModifier.MetaModifier if IS_MAC else Qt.KeyboardModifier.ControlModifier)
+        return self.snap and not held
+
+    def _start_layer_drag(self, event):
+        point = self._free_point(event)
+        zoom = self._zoom()
+        hit = TF.hit_test(self.layer_frame, point.x(), point.y(), zoom)
+        if self.auto_select and hit not in ("rotate", "rotate-zone") and not isinstance(hit, tuple):
+            self.layerPickRequested.emit(point.x(), point.y())
+            hit = TF.hit_test(self.layer_frame, point.x(), point.y(), zoom)
+            if hit is None:
+                return
+        if self.layer_frame is None:
+            return
+        if not self.layer_editable:
+            self.actionRequested.emit("locked")
+            return
+        kind = "rotate" if hit in ("rotate", "rotate-zone") else "scale" if isinstance(hit, tuple) else "move"
+        if not self.begin_preview():
+            return
+        targets = self.snap_provider() if self.snap_provider else ([], [])
+        self._drag = {"kind": kind, "handle": hit, "start": (point.x(), point.y()), "frame": self.layer_frame,
+                      "current": self.layer_frame, "matrix": (1.0, 0.0, 0.0, 0.0, 1.0, 0.0), "targets": targets,
+                      "moved": False}
+        self.setCursor(Qt.CursorShape.ClosedHandCursor if kind == "move" else self.cursor())
+        event.accept()
+
+    def _update_layer_drag(self, event):
+        drag = self._drag
+        point = self._free_point(event)
+        mods = event.modifiers()
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        start, frame = drag["start"], drag["frame"]
+        self._snap_lines = []
+        if drag["kind"] == "move":
+            dx, dy = point.x() - start[0], point.y() - start[1]
+            if shift:  # constrain to the main axis
+                if abs(dx) > abs(dy):
+                    dy = 0
+                else:
+                    dx = 0
+            if self._snap_enabled(mods):
+                tx, ty = drag["targets"]
+                dx, dy, self._snap_lines = TF.snap_move(frame, dx, dy, [] if shift and not dx else tx,
+                                                        [] if shift and not dy else ty, 8 / self._zoom())
+            dx, dy = round(dx), round(dy)
+            new = (frame[0] + dx, frame[1] + dy, *frame[2:])
+            matrix = (1.0, 0.0, float(dx), 0.0, 1.0, float(dy))
+            drag["offset"] = (dx, dy)
+        elif drag["kind"] == "scale":
+            new = TF.scale_frame(frame, drag["handle"], point.x(), point.y(),
+                                 keep_aspect=not shift, from_center=alt)
+            matrix = TF.frame_delta(frame, new)
+        else:
+            new = TF.rotate_frame(frame, start, (point.x(), point.y()), snap=shift)
+            matrix = TF.frame_delta(frame, new)
+        drag["current"], drag["matrix"] = new, matrix
+        drag["moved"] = drag["moved"] or math.hypot(point.x() - start[0], point.y() - start[1]) * self._zoom() > 2
+        self._preview_transform(matrix)
+        self.viewport().update()
+
+    def _finish_layer_drag(self, cancel=False):
+        drag, self._drag = self._drag, None
+        self._snap_lines = []
+        if drag is None:
+            return
+        changed = not cancel and drag["moved"]
+        if drag["kind"] == "move":
+            changed = changed and drag.get("offset", (0, 0)) != (0, 0)
+        if not changed:
+            self.end_preview()
+            self.set_tool(self.tool)
+            return
+        # The preview stays until the workspace shows the applied result.
+        self.layer_frame = drag["current"]
+        self.set_tool(self.tool)
+        for item in self.preview_items:
+            item.setVisible(bool(item.pixmap() and not item.pixmap().isNull()))
+        self.item.setVisible(False)
+        if drag["kind"] == "move":
+            self.transformFinished.emit("move", drag["offset"])
+        else:
+            self.transformFinished.emit("affine", drag["matrix"])
+
+    def _hover_cursor(self, point):
+        if self.tool != "move" or self.layer_frame is None or self.busy:
+            return
+        hit = TF.hit_test(self.layer_frame, point.x(), point.y(), self._zoom())
+        if hit in ("rotate", "rotate-zone"):
+            if self._rotate_cursor is None:
+                self._rotate_cursor = _rotate_cursor()
+            self.setCursor(self._rotate_cursor)
+        elif isinstance(hit, tuple):
+            angle = TF.handle_cursor_angle(self.layer_frame, hit)
+            shapes = [Qt.CursorShape.SizeHorCursor, Qt.CursorShape.SizeFDiagCursor,
+                      Qt.CursorShape.SizeVerCursor, Qt.CursorShape.SizeBDiagCursor]
+            self.setCursor(shapes[round(angle / 45) % 4])
+        elif hit == "inside":
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
     def mouseMoveEvent(self, event):
+        if self._drag is not None:
+            self._cursor = self._point(event)
+            self._update_layer_drag(event)
+            return
+        if not self._down and self._pan is None and not event.buttons():
+            self._hover_cursor(self._free_point(event))
         self._cursor = self._point(event)
         if self._pan is not None:
             pos = event.position().toPoint()
@@ -231,6 +451,10 @@ class ImageCanvas(QGraphicsView):
         return rect
 
     def mouseReleaseEvent(self, event):
+        if self._drag is not None:
+            self._update_layer_drag(event)
+            self._finish_layer_drag()
+            return
         if self._pan is not None:
             self._pan = None
             self.set_tool(self.tool)
@@ -268,6 +492,14 @@ class ImageCanvas(QGraphicsView):
         if key == Qt.Key.Key_Space:
             self._space = True
             event.accept()
+        elif key == Qt.Key.Key_Escape and self._drag is not None:
+            self._finish_layer_drag(cancel=True)
+        elif (key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down) and self.tool == "move"
+              and not event.modifiers() & ~(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.KeypadModifier)):
+            step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
+            dx = {Qt.Key.Key_Left: -step, Qt.Key.Key_Right: step}.get(key, 0)
+            dy = {Qt.Key.Key_Up: -step, Qt.Key.Key_Down: step}.get(key, 0)
+            self.nudgeRequested.emit(dx, dy)
         elif key == Qt.Key.Key_Escape:
             self.crop_rect = None
             self._points = []
@@ -284,12 +516,8 @@ class ImageCanvas(QGraphicsView):
         elif key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
             self.actionRequested.emit("smaller" if key == Qt.Key.Key_BracketLeft else "larger")
         elif not event.modifiers():
-            tools = {Qt.Key.Key_V: "move", Qt.Key.Key_M: "rect", Qt.Key.Key_L: "lasso", Qt.Key.Key_W: "wand",
-                     Qt.Key.Key_Q: "quick", Qt.Key.Key_C: "crop", Qt.Key.Key_B: "pen", Qt.Key.Key_E: "eraser",
-                     Qt.Key.Key_S: "clone", Qt.Key.Key_J: "heal", Qt.Key.Key_T: "text", Qt.Key.Key_U: "shape",
-                     Qt.Key.Key_X: "magic"}
-            if key in tools:
-                self.toolRequested.emit(tools[key])
+            if key in TOOL_KEYS:
+                self.toolRequested.emit(TOOL_KEYS[key])
             else:
                 super().keyPressEvent(event)
         else:
@@ -369,8 +597,55 @@ class ImageCanvas(QGraphicsView):
             painter.drawEllipse(self._cursor, self.diameter / 2, self.diameter / 2)
             painter.setPen(QPen(Qt.GlobalColor.white, 0))
             painter.drawEllipse(self._cursor, self.diameter / 2, self.diameter / 2)
+        if self.tool == "move" and self.layer_frame is not None and not self.busy:
+            self._paint_frame(painter, zoom)
+        if self._snap_lines:
+            painter.setPen(QPen(SNAP_COLOR, 0))
+            big = 1e6
+            for axis, value in self._snap_lines:
+                if axis == "x":
+                    painter.drawLine(QPointF(value, -big), QPointF(value, big))
+                else:
+                    painter.drawLine(QPointF(-big, value), QPointF(big, value))
         if self.rulers:
             paint_rulers(self, painter, self._unit_px(), QColor("#303641"), QColor("#d7dde6"), QColor("#62b8ff"))
+
+    def _paint_frame(self, painter, zoom):
+        frame = self._drag["current"] if self._drag else self.layer_frame
+        polygon = QPolygonF([QPointF(*p) for p in TF.corners(frame)])
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255, 170), 3 / zoom))
+        painter.drawPolygon(polygon)
+        painter.setPen(QPen(FRAME_COLOR if self.layer_editable else QColor("#9aa3af"), 0))
+        painter.drawPolygon(polygon)
+        if not self.layer_editable:
+            return
+        top = TF.frame_point(frame, 0.0, -0.5 if frame[3] >= 0 else 0.5)
+        knob = TF.rotate_handle(frame, zoom)
+        painter.drawLine(QPointF(*top), QPointF(*knob))
+        size = 7 / zoom
+        painter.setBrush(Qt.GlobalColor.white)
+        for handle in TF.HANDLES:
+            x, y = TF.frame_point(frame, *handle)
+            painter.drawRect(QRectF(x - size / 2, y - size / 2, size, size))
+        painter.drawEllipse(QPointF(*knob), 4.5 / zoom, 4.5 / zoom)
+        if self._drag and self._drag["kind"] != "move":
+            text = (f"{frame[4]:.1f}°" if self._drag["kind"] == "rotate"
+                    else f"{abs(frame[2]):.0f} × {abs(frame[3]):.0f} px")
+            painter.save()
+            painter.resetTransform()
+            pos = self.mapFromScene(self._cursor) + QPointF(14, 18).toPoint()
+            font = QFont(self.font())
+            font.setPointSizeF(max(9.0, font.pointSizeF() - 1))
+            painter.setFont(font)
+            metrics = painter.fontMetrics()
+            box = QRectF(pos.x(), pos.y(), metrics.horizontalAdvance(text) + 12, metrics.height() + 6)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(20, 22, 28, 215))
+            painter.drawRoundedRect(box, 5, 5)
+            painter.setPen(Qt.GlobalColor.white)
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+            painter.restore()
 
     def _unit_px(self):
         return {"px": 1, "in": self.dpi, "cm": self.dpi / 2.54, "mm": self.dpi / 25.4}[self.unit]

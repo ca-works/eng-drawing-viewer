@@ -44,7 +44,8 @@ Get-FileHash ENG-Drawing-Viewer-Windows-x64.zip       # Windows: compare with SH
 ## Built and checked
 
 - Built from the published source archive with Python 3.13 and hash-checked dependencies.
-- The Universal Mac app contains Intel and Apple silicon code in every binary, and was tested on both.
+- The Universal Mac app contains Intel and Apple silicon code in every binary. It was tested natively on Apple silicon and as Intel code under Rosetta 2; it has not yet been run on a physical Intel Mac.
+- Windows was tested automatically on Windows Server, Linux on Ubuntu 22.04 and 24.04, Debian 12, Fedora 42 and Rocky Linux 9; neither has had hands-on testing on an everyday desktop yet.
 - Every bundled component and its licence is listed in the app under **Help › About › Third-Party Notices**.
 
 Changes in detail: [CHANGELOG.md](https://github.com/ca-works/eng-drawing-viewer/blob/main/CHANGELOG.md)

@@ -97,6 +97,22 @@ This is a port of the author's independently developed Continuity Camera design,
 3. **Focus.** The anchor stays first responder until the capture arrives, or for 5 minutes.
 4. **Receiving.** `readSelectionFromPasteboard:` reads the bytes synchronously: the promised type first, then every accepted type, then file URLs. The bytes are saved unchanged and the UI work runs on the next event-loop turn.
 
+## Image Editor (`core/image_document.py`, `core/image_tools.py`, `ui/image_editor/`)
+
+The model is Qt-free and shared by every edition; only the clipboard and title-bar integration are
+platform code.
+
+| Module | Role |
+|---|---|
+| `core/image_document.py` | `ImageDocument` / `ImageLayer`: layers as axis-aligned RGBA arrays with integer offsets, masks, blend modes, undo snapshots (`batch()` groups a command into one step). Affine helpers and `warp` (premultiplied, area-averaged for reductions); `transform_layer` re-renders from the layer's original pixels (`LayerSource`), valid only while the layer image is the one it produced. Layer copy/cut, Reveal All, fit/centre. ENGIMG v1/v2 read and write, also as bytes for the private clipboard. |
+| `core/image_tools.py` | Selections and retouching. `color_region` is the one colour engine (Magic Wand, Magic Eraser, Paint Bucket, Background Eraser): ΔE*94 from a robust sample, `edge_walls` (Canny + strong gradients on CIELAB, noise-adaptive) for Stop at edges, two-colour soft boundaries. `remove_background` (edge-walled GrabCut seeding), `refine_mask` (full-resolution boundary), `decontaminate`. |
+| `core/image_clipboard.py` | Encode for other apps (chosen format + PNG/TIFF, DIBV5) plus the private layer type; `read_clipboard` with file-equivalent limits. macOS through NSPasteboard, Windows through Win32 formats, Linux through Qt. |
+| `ui/image_editor/canvas.py` | Viewport in source pixels. Move tool frame, handles, live split preview (below / active / above pixmaps), snapping, cursors. Emits gestures and transforms; never edits the document itself. |
+| `ui/image_editor/transform.py` | Pure frame geometry (handles, scale about an anchor, rotate, snap) shared by the canvas and tests. |
+| `ui/image_editor/workspace.py` | Tools, panels, layer list, drag-and-drop targets, clipboard commands. Every edit runs through `mutate()` on a worker thread and restores the previous state on failure. |
+| `ui/main_window.py` | Owns the Edit-menu keys (one action per shortcut), enabled per workspace; the Toolbar's empty areas drag the window (`startSystemMove`). |
+| `ui/widgets.py`, `ui/view_options.py` | `DropdownButton` (menu buttons with a separate arrow) and `ViewOptionsBar` (the editors' responsive status strip). |
+
 ## Settings and caches
 
 | What | Where |

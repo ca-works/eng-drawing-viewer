@@ -21,7 +21,8 @@ from ...core.vector_trace import simplify_object, trace_image
 from .. import icons
 from ..rulers import RULER, paint_grid, paint_rulers
 from ..theme import ThemeManager, qc
-from ..widgets import label, primary_button, secondary_button, tool_button
+from ..view_options import ViewOptionsBar
+from ..widgets import DropdownButton, label, primary_button, secondary_button, tool_button
 
 
 # Vector files open as documents; raster images open as a tracing reference.
@@ -257,7 +258,8 @@ class VectorWorkspace(QWidget):
         self._build()
         self.canvas.setAcceptDrops(False)  # dropped files go to the workspace, not the graphics scene
         self.canvas.viewport().setAcceptDrops(False)
-        ThemeManager.instance().changed.connect(lambda: self.canvas.viewport().update())
+        # A bound slot, so Qt disconnects it when the canvas is destroyed.
+        ThemeManager.instance().changed.connect(self.canvas.viewport().update)
         self.refresh(fit=True)
 
     def showEvent(self, event):
@@ -275,8 +277,7 @@ class VectorWorkspace(QWidget):
             button = secondary_button(text, icon_name); button.clicked.connect(callback); top.addWidget(button)
         for name, callback in (("undo", self.undo), ("redo", self.redo)):
             button = tool_button(name, name.title()); button.clicked.connect(callback); top.addWidget(button)
-        self.operations = QToolButton(); self.operations.setText("Geometry"); self.operations.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        menu = QMenu(self.operations)
+        self.operations = DropdownButton("Geometry"); menu = self.operations.dropdown_menu()
         for name, callback in (("Duplicate", self.duplicate), ("Delete", self.delete_selected), ("Group", self.group), ("Ungroup", self.ungroup),
                                ("Union", lambda: self.boolean("union")), ("Subtract", lambda: self.boolean("subtract")), ("Intersect", lambda: self.boolean("intersect")),
                                ("Exclusion", lambda: self.boolean("exclude")),
@@ -284,7 +285,7 @@ class VectorWorkspace(QWidget):
                                ("Fit artboard to artwork", self.fit_artboard), ("Calibrate selected width…", self.calibrate), ("Cutting checks", self.cutting_checks),
                                ("Clear guides", self.clear_guides)):
             menu.addAction(name, callback)
-        self.operations.setMenu(menu); top.addWidget(self.operations); top.addStretch()
+        top.addWidget(self.operations); top.addStretch()
         export = primary_button("Export", "export"); export.clicked.connect(self.export_dialog); top.addWidget(export)
         root.addLayout(top)
         body = QHBoxLayout(); body.setSpacing(0)
@@ -329,16 +330,23 @@ class VectorWorkspace(QWidget):
         scroll = QScrollArea(); scroll.setWidget(panel); scroll.setWidgetResizable(True)
         scroll.setFixedWidth(286); scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         body.addWidget(scroll); root.addLayout(body, 1)
-        bottom = QHBoxLayout(); bottom.setContentsMargins(12, 7, 12, 7)
-        for text, callback in (("Fit", self.fit), ("100%", self.actual_size)):
-            button = secondary_button(text); button.clicked.connect(callback); bottom.addWidget(button)
-        self.grid = QCheckBox("Grid"); self.grid.setToolTip("Show the grid (Ctrl+')"); self.grid.toggled.connect(lambda: self.canvas.viewport().update()); bottom.addWidget(self.grid)
-        self.snap = QCheckBox("Snap"); bottom.addWidget(self.snap)
-        self.rulers = QCheckBox("Rulers"); self.rulers.setChecked(True); self.rulers.toggled.connect(lambda: self.canvas.viewport().update()); bottom.addWidget(self.rulers)
-        self.units = QComboBox(); self.units.addItems(["mm", "cm", "in"]); self.units.currentTextChanged.connect(self.change_units); bottom.addWidget(self.units)
-        self.grid_step = self._number(5, .1, 1000, 1); self.grid_step.setSuffix(" mm"); self.grid_step.setMaximumWidth(100)
-        self.grid_step.valueChanged.connect(lambda: self.canvas.viewport().update()); bottom.addWidget(self.grid_step)
-        self.status = label("", "small"); bottom.addWidget(self.status, 1); root.addLayout(bottom)
+        self.view_bar = ViewOptionsBar([("grid", "Grid", "Show the grid (Ctrl+')"),
+                                        ("snap", "Snap", "Snap to the grid and guides"),
+                                        ("rulers", "Rulers", "Show rulers. Drag from a ruler to place a guide.")], ["mm", "cm", "in"])
+        self.status = self.view_bar.status
+        fit = tool_button("fit-page", "Fit the artboard in the window", size=26, icon_size=16); fit.clicked.connect(self.fit)
+        actual = tool_button("actual-size", "Actual size (100%)", size=26, icon_size=16); actual.clicked.connect(self.actual_size)
+        self.view_bar.add_leading(fit); self.view_bar.add_leading(actual)
+        self.grid, self.snap, self.rulers = (self.view_bar.box(key) for key in ("grid", "snap", "rulers"))
+        self.rulers.setChecked(True)
+        self.view_bar.toggled.connect(lambda *_: self.canvas.viewport().update())
+        self.units = self.view_bar.units; self.units.currentTextChanged.connect(self.change_units)
+        self.grid_step = self._number(5, .1, 1000, 1); self.grid_step.setSuffix(" mm"); self.grid_step.setToolTip("Grid spacing")
+        self.grid_step.setFixedWidth(self.grid_step.sizeHint().width() + 8)
+        self.grid_step.valueChanged.connect(lambda: self.canvas.viewport().update()); self.view_bar.add_inline(self.grid_step)
+        self.view_bar.add_menu_action("Grid spacing…", self.grid_spacing_dialog)
+        self.view_bar.add_menu_action("Clear guides", self.clear_guides)
+        root.addWidget(self.view_bar)
         for shortcut, callback in (("Ctrl+S", self.save_project), ("Ctrl+Z", self.undo), ("Ctrl+Shift+Z", self.redo), ("Ctrl+D", self.duplicate),
                                    ("V", lambda: self.set_tool("select")), ("A", lambda: self.set_tool("nodes")), ("P", lambda: self.set_tool("pen")),
                                    ("R", lambda: self.set_tool("rectangle")), ("E", lambda: self.set_tool("ellipse")), ("T", lambda: self.set_tool("text")), ("Ctrl+'", self.grid.toggle)):
@@ -626,6 +634,12 @@ class VectorWorkspace(QWidget):
         self.document.snapshot()
         self.document.units = unit
         self.canvas.viewport().update()
+
+    def grid_spacing_dialog(self):
+        value, ok = QInputDialog.getDouble(self, "Grid spacing", f"Spacing ({self.grid_step.suffix().strip()})",
+                                           self.grid_step.value(), self.grid_step.minimum(), self.grid_step.maximum(), 2)
+        if ok:
+            self.grid_step.setValue(value)
 
     def clear_guides(self):
         self.document.snapshot(); self.document.guides = []; self.canvas.viewport().update()

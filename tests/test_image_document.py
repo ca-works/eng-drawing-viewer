@@ -154,7 +154,7 @@ def _mutate_project(source, target, change, extra=None):
 
 
 @pytest.mark.parametrize("mutation", [
-    lambda m: m.update(version=2),
+    lambda m: m.update(version=3),
     lambda m: m.update(width=100000000),
     lambda m: m.update(width=True),
     lambda m: m.update(dpi=float("nan")),

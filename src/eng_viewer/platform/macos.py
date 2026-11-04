@@ -137,6 +137,41 @@ def unify_title_bar(widget) -> bool:
         return False
 
 
+def title_bar_double_click_action() -> str:
+    """What System Settings › Desktop & Dock asks a title-bar double-click to do: zoom, minimize or none."""
+    if not IS_MAC:
+        return "zoom"
+    try:
+        from Foundation import NSUserDefaults
+
+        defaults = NSUserDefaults.standardUserDefaults()
+        action = defaults.stringForKey_("AppleActionOnDoubleClick")
+        if action is not None:
+            action = str(action).lower()
+            return "minimize" if action.startswith("mini") else "none" if action in ("none", "do nothing") else "zoom"
+        if defaults.boolForKey_("AppleMiniaturizeOnDoubleClick"):
+            return "minimize"
+    except Exception:
+        pass
+    return "zoom"
+
+
+def title_bar_double_click(widget) -> bool:
+    """Do the system's title-bar double-click action on ``widget``'s window. False when not handled here."""
+    win = _nswindow(widget)
+    if win is None:
+        return False
+    action = title_bar_double_click_action()
+    try:
+        if action == "minimize":
+            win.performMiniaturize_(None)
+        elif action == "zoom":
+            win.performZoom_(None)
+        return True
+    except Exception:
+        return False
+
+
 def set_represented_file(widget, path: str | None):
     """Keep the document path on the window (Mission Control, Window menu)."""
     win = _nswindow(widget)

@@ -1,6 +1,6 @@
 # Platform compatibility
 
-ENG Drawing Viewer 2.3.0 ships as four editions built from one source tree. Every workspace
+ENG Drawing Viewer 2.3 ships as four editions (the Apple Silicon edition is at 2.3.1; the others are at 2.3.0 until their 2.3.1 builds are verified) built from one source tree. Every workspace
 (Viewer, MARK, PowerPoint export, PDF Tools, Image, Vector, Edit PDF) is the same code on every
 edition. This page lists the places where a platform does something differently, and why.
 

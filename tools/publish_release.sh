@@ -4,7 +4,8 @@
 #   tools/publish_release.sh <candidate-folder> <approved-manifest-sha256>
 #
 # The candidate folder holds the release assets, SHA256SUMS.txt, release-manifest.json and
-# RELEASE_NOTES.md. The script refuses to continue unless the manifest's SHA-256 equals the
+# RELEASE_NOTES.md. For a repository that already exists, main gets one new commit whose tree is the
+# source archive, and the release tag points at it. The script refuses to continue unless the manifest's SHA-256 equals the
 # approved hash and every asset matches SHA256SUMS.txt. It then:
 #   1. creates the public app repository if it doesn't exist, with one fresh commit made from the
 #      source archive (no private history);
@@ -42,6 +43,21 @@ if ! gh repo view "$APP_REPO" >/dev/null 2>&1; then
     --homepage "https://ca-works.github.io/eng-drw/" --source . --push
   gh repo edit "$APP_REPO" --enable-issues --enable-wiki=false \
     --add-topic engineering-drawings --add-topic pdf --add-topic macos --add-topic pyside6
+  cd "$CANDIDATE"
+else
+  # One commit per release on main: the tree becomes exactly the source archive's contents.
+  echo "==> Committing the $VERSION source to $APP_REPO main"
+  WORK="$(mktemp -d)"
+  gh repo clone "$APP_REPO" "$WORK/repo" -- -q
+  unzip -q "$SOURCE_ZIP" -d "$WORK/src"
+  rm -f "$WORK/src/eng-drawing-viewer-$VERSION/SOURCE_MANIFEST.txt"
+  cd "$WORK/repo"
+  git rm -rq --ignore-unmatch . && git clean -fdq
+  cp -R "$WORK/src/eng-drawing-viewer-$VERSION/." .
+  git add -A
+  git -c user.name=ca-works -c user.email=337696274+ca-works@users.noreply.github.com \
+    commit -q -m "ENG Drawing Viewer $VERSION"
+  git push -q origin main
   cd "$CANDIDATE"
 fi
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.3.1 — macOS Apple Silicon (4 November 2026)
+
+Image Editor composition, accuracy and interface fixes. Published for macOS Apple Silicon only; the
+Windows and Linux editions stay at 2.3.0 until a 2.3.1 build of each has been verified, and the
+Universal Mac edition is still to come. Details and measurements: docs/IMAGE_EDITOR.md and
+docs/TEST_RESULTS.md.
+
+### New
+- **Images as layers**: drop images on the canvas or the Layers panel, paste (⌘V / Ctrl+V) or use
+  *Layer › Import image as layer* to add them above the active layer. Dropping on the document tabs,
+  holding Option/Alt, or Open still opens a separate document; a drag shows which will happen.
+- **Move tool transforms**: move, scale and rotate the active layer on the canvas with handles,
+  snapping guides, arrow-key nudging, numeric X/Y/W/H/angle, Fit to canvas, Reveal All, Flip and
+  Reset. Layers keep their original pixels, so repeated transforms never compound blur.
+- **Photoshop clipboard keys**: ⌘C copies the layer or selected pixels, ⇧⌘C the merged image, ⌘X
+  cuts, ⌘V pastes as a new layer (or a new document when none is open), ⌘J duplicates or makes a
+  layer via copy, ⇧⌘J layer via cut. Copies keep masks, opacity, blend mode and position inside the
+  editor and reach other apps as PNG/TIFF in the chosen clipboard format.
+- **Paint Bucket (G)** with tolerance, contiguous, anti-aliasing, selection limits, sample all
+  layers and fill on a new layer.
+- Blend modes darken, lighten, difference and soft light; merge down; drag to reorder layers.
+
+### Better
+- **Magic Eraser** distinguishes light subjects from light backdrops: perceptual colour difference
+  from a robust sample, stops at visible edges, true anti-aliased edges. On a figure in light
+  clothing on a beige backdrop, IoU 52.7 % → 98–99.8 %.
+- **Automatic background removal**: edge-aware backdrop seeding, subject-rim constraints and
+  full-resolution edge refinement (also for offline model output); optional clean edge colours on
+  a new layer.
+- The window moves by dragging any empty part of the title bar; a double-click does what System
+  Settings asks.
+- The Viewer welcome screen no longer lets the app icon touch the "Open a folder of drawings"
+  heading, and its two-line explanation is no longer clipped.
+- The disk image's Read Me no longer carries the leftover "private development candidate" line.
+- Dropdown labels and arrows never overlap; the View/Grid/Snap/Rulers bar never squeezes or clips
+  its controls and folds them into the View menu when space is short.
+
+### Compatibility
+- Projects with transformed layers are saved as ENGIMG version 2, which 2.3.0 does not open
+  (it reports an unsupported version). Other projects remain version 1.
+
 ## 2.3.0 — four editions: macOS Universal, macOS Apple Silicon, Windows x64, Linux x86-64
 
 One version for every platform, built from the same source. Includes the Windows rebuild that was
@@ -25,8 +66,9 @@ published as the 2.2.1 Windows Preview (below) and brings its shared fixes to th
   release builds would have stopped on it).
 
 ### Security and privacy
-- Every Mac edition ships a minimal OpenCV (core, imgproc, photo) built from the official source
-  release, without FFmpeg, OpenSSL, libssh or image codecs.
+- Every edition ships a minimal OpenCV (core, imgproc, photo) built from the official source
+  release, without FFmpeg, OpenSSL, libssh or image codecs: smaller downloads, no unused network
+  or video code, and no OpenSSL 1.1.1 in the Linux AppImage.
 
 ## 2.2.1 — Windows release
 

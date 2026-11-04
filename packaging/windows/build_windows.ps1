@@ -68,6 +68,16 @@ if (-not (Test-Path "$Venv\Scripts\python.exe")) {
 $Py = "$Venv\Scripts\python.exe"
 Step "Installing hash-checked build dependencies"
 Run uv pip install --quiet --python $Py --require-hashes -r packaging\requirements-windows.txt
+if ($env:OPENCV_WHEEL) {
+    # The minimal OpenCV built from the pinned source release (tools/build_opencv_minimal.sh): the
+    # published wheel bundles FFmpeg (opencv_videoio_ffmpeg), which the app never uses.
+    if (-not ((Split-Path $env:OPENCV_WHEEL -Leaf) -like "opencv_python_headless-*.whl") -or -not (Test-Path $env:OPENCV_WHEEL)) {
+        throw "OPENCV_WHEEL is not an OpenCV wheel: $env:OPENCV_WHEEL"
+    }
+    Step "Replacing the published OpenCV with the minimal source build ($(Split-Path $env:OPENCV_WHEEL -Leaf))"
+    Write-Host "    SHA-256 $((Get-FileHash $env:OPENCV_WHEEL -Algorithm SHA256).Hash.ToLower())"
+    Run uv pip install --quiet --python $Py --no-index --no-deps --reinstall $env:OPENCV_WHEEL
+}
 Run uv pip install --quiet --python $Py --no-deps --reinstall-package eng-drawing-viewer .
 Run $Py -c "import sys; print('    Python', sys.version.split()[0])"
 Run $Py -c "import PySide6.QtWidgets, pymupdf, pptx, win32com.client, numpy, cv2, pillow_heif, onnx, onnxruntime, ezdxf, defusedxml; print('    dependencies import')"

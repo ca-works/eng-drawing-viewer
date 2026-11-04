@@ -1,4 +1,4 @@
-This private development candidate requires macOS 14.4 or later (Apple silicon).
+ENG Drawing Viewer requires macOS 14.4 or later on a Mac with Apple silicon (M1 or newer).
 
 ENG Drawing Viewer for Mac (Apple silicon)
 ==========================================

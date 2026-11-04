@@ -17,6 +17,9 @@
 #   APPIMAGE_RUNTIME=path       use this runtime file instead of downloading the pinned release
 #   APPIMAGE_RUNTIME_SHA256=…   require this runtime hash (default: the pinned release's)
 #   SKIP_APPIMAGE=1             stop after the AppDir (no runtime needed)
+#   OPENCV_WHEEL=path           replace the published OpenCV with the minimal source build
+#                               (tools/build_opencv_minimal.sh). Release builds use it: the published
+#                               wheel bundles FFmpeg and OpenSSL 1.1.1, which the app never uses.
 #
 # Output in release/linux/:
 #   ENG-Drawing-Viewer-<version>-Linux-x86_64.AppImage
@@ -85,6 +88,12 @@ fi
 PY="$VENV/bin/python"
 step "Installing hash-checked build dependencies"
 uv pip sync --quiet --python "$PY" --require-hashes packaging/requirements-linux.txt
+if [[ -n "${OPENCV_WHEEL:-}" ]]; then
+  [[ "$OPENCV_WHEEL" == */opencv_python_headless-*.whl && -f "$OPENCV_WHEEL" ]] || { echo "OPENCV_WHEEL is not an OpenCV wheel: $OPENCV_WHEEL" >&2; exit 1; }
+  step "Replacing the published OpenCV with the minimal source build ($(basename "$OPENCV_WHEEL"))"
+  sha256sum "$OPENCV_WHEEL" | sed 's/^/    /'
+  uv pip install --quiet --python "$PY" --no-index --no-deps --reinstall "$OPENCV_WHEEL"
+fi
 uv pip install --quiet --python "$PY" --no-deps --no-build-isolation --reinstall-package eng-drawing-viewer .
 "$PY" -c 'import sys; print("    Python", sys.version.split()[0])'
 "$PY" -c "import PySide6.QtWidgets, pymupdf, pptx, numpy, cv2, pillow_heif, onnx, onnxruntime, ezdxf, defusedxml; print('    dependencies import')"
@@ -203,14 +212,16 @@ rm -rf "$WORK/extract"
 
 step "Writing the build report and checksums"
 "$PY" - "$OUT" "$BASENAME" "$VERSION" "$runtime_sha" "$RUNTIME_TAG" "$WORK/check_bundle.json" <<'PYEOF'
-import hashlib, json, os, platform, subprocess, sys
+import hashlib, json, os, platform, shutil, subprocess, sys
 out, base, version, runtime_sha, tag, check = sys.argv[1:]
 image = os.path.join(out, base + ".AppImage")
 report = {
     "edition": "linux-x86_64", "version": version, "file": base + ".AppImage",
     "size_bytes": os.path.getsize(image),
     "sha256": hashlib.sha256(open(image, "rb").read()).hexdigest(),
-    "source_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip() or None,
+    # A build from the source archive has no git: SOURCE_COMMIT names the commit it was exported from.
+    "source_commit": os.environ.get("SOURCE_COMMIT") or (shutil.which("git") and subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()) or None,
     "build_glibc": platform.libc_ver()[1],
     "minimum_glibc": json.load(open(check)).get("glibc_required"),
     "appimage_runtime": {"release": tag, "sha256": runtime_sha},

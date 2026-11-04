@@ -311,11 +311,13 @@ class OfflineSegmenter:
         return session
 
     def remove_background_mask(self, image: Image.Image, *, progress: Progress | None = None,
-                               cancelled: Callable[[], bool] | None = None) -> Image.Image:
+                               cancelled: Callable[[], bool] | None = None, refine: bool = False) -> Image.Image:
         """Return a full-size L foreground mask, preserving the caller's image.
 
         The mask is independent of any existing image alpha; the layer compositor
         multiplies both. A probability mask is not a guarantee of fine-edge matting.
+        With ``refine`` the upsampled model mask's boundary is re-estimated from the
+        full-resolution image (``image_tools.refine_mask``).
         """
         check_pixels(*image.size)
         emit = progress or (lambda _percent, _message: None)
@@ -356,6 +358,12 @@ class OfflineSegmenter:
             emit(90, "Restoring mask resolution")
             mask = Image.fromarray(np.rint(np.clip(alpha, 0, 1) * 255).astype(np.uint8))
             mask = mask.resize(image.size, Image.Resampling.LANCZOS)
+            if refine:
+                import math
+                from .image_tools import refine_mask
+                emit(95, "Refining edges at full resolution")
+                upscale = max(image.size) / max(pack.width, pack.height)
+                mask = refine_mask(image, mask, band=max(2, math.ceil(1.5 * upscale)))
             _check_cancelled(cancelled)
             self.last_metrics = InferenceMetrics(load_seconds, inference_seconds,
                                                  time.perf_counter() - start,

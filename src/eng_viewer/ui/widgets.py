@@ -7,8 +7,9 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QKeySequence, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton,
-    QVBoxLayout, QWidget,
+    QAbstractButton, QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QComboBox, QFrame,
+    QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSizePolicy,
+    QTabBar, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import icons
@@ -171,6 +172,258 @@ class ElidedLabel(QLabel):
     def sizeHint(self):
         sh = super().sizeHint()
         return QSize(min(sh.width(), 400), sh.height())
+
+
+_CONTROLS = (QAbstractButton, QComboBox, QLineEdit, QAbstractSpinBox, QAbstractSlider, QTabBar,
+             QAbstractItemView, QTextEdit, QPlainTextEdit)
+
+
+def is_drag_background(container: QWidget, pos) -> bool:
+    """True when ``pos`` (container coordinates) is over empty chrome rather than a control.
+
+    Labels, spacers and plain layout containers count as background; buttons, fields, tab bars,
+    focusable custom controls (such as the workspace tabs) and selectable text do not. A widget
+    can opt out with the ``windowDrag`` property set to False.
+    """
+    widget = container.childAt(pos)
+    while widget is not None and widget is not container:
+        if isinstance(widget, _CONTROLS) or widget.property("windowDrag") is False:
+            return False
+        if widget.focusPolicy() != Qt.FocusPolicy.NoFocus and not isinstance(widget, QLabel):
+            return False
+        if isinstance(widget, QLabel):
+            flags = widget.textInteractionFlags()
+            # Labels accept link clicks by default; only actual links or selectable text are controls.
+            if flags & Qt.TextInteractionFlag.TextSelectableByMouse or (
+                    flags & Qt.TextInteractionFlag.LinksAccessibleByMouse and "href" in widget.text()):
+                return False
+        widget = widget.parentWidget()
+    return True
+
+
+class DropdownButton(QToolButton):
+    """A button that opens a menu, with its arrow in a space of its own on the right.
+
+    Platform styles draw a tool button's menu arrow over the corner of its label (the macOS
+    style also ignores style-sheet padding), so this button paints itself from the theme
+    tokens: the label and the vector chevron never overlap, at any width, font size or device
+    pixel ratio, in light and dark themes. A label that does not fit is elided.
+
+    Variants: "secondary" (bordered, the default), "ghost" (borderless) and "primary".
+    ``split=True`` makes a click on the label emit ``clicked`` while the arrow segment opens
+    the menu (Down arrow does too). Short labels (8 characters or fewer) never shrink;
+    ``compact_text`` is shown instead of eliding a longer one when space runs short.
+    """
+
+    ARROW = 18  # width of the arrow segment
+
+    def __init__(self, text: str = "", icon_name: str | None = None, menu: QMenu | None = None,
+                 variant: str = "secondary", split: bool = False, parent=None):
+        super().__init__(parent)
+        self._variant = variant
+        self._split = split
+        self._icon_name = icon_name
+        self._split_menu: QMenu | None = None
+        self._hover_part = None
+        self._menu_open = False
+        self.compact_text = ""
+        if variant != "ghost":
+            # Match the push buttons beside it (tool buttons default to a smaller font on macOS).
+            from PySide6.QtWidgets import QApplication
+
+            self.setFont(QApplication.font("QPushButton"))
+        self.setText(text)
+        self.setAccessibleName(text)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.set_dropdown_menu(menu if menu is not None else QMenu(self))
+
+    # ------------------------------------------------------------------ menu
+    def set_dropdown_menu(self, menu: QMenu):
+        if self._split:
+            self._split_menu = menu
+        else:
+            self.setMenu(menu)
+            self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu.aboutToShow.connect(lambda: self._set_menu_open(True))
+        menu.aboutToHide.connect(lambda: self._set_menu_open(False))
+
+    def dropdown_menu(self) -> QMenu:
+        return self._split_menu if self._split else self.menu()
+
+    def _set_menu_open(self, value: bool):
+        self._menu_open = value
+        self.update()
+
+    def open_menu(self):
+        menu = self.dropdown_menu()
+        if menu is None:
+            return
+        if self._split:
+            menu.exec(self.mapToGlobal(QPoint(0, self.height() + 2)))
+        else:
+            self.showMenu()
+
+    # -------------------------------------------------------------- geometry
+    def _metrics(self):
+        fm = QFontMetrics(self.font())
+        pad = 7 if self._variant == "ghost" else 10
+        icon_w = 16 + (6 if self.text() else 0) if self._icon_name else 0
+        return fm, pad, icon_w
+
+    def _arrow_width(self) -> int:
+        return self.ARROW + (4 if self._split else 0)
+
+    def sizeHint(self) -> QSize:
+        fm, pad, icon_w = self._metrics()
+        text_w = fm.horizontalAdvance(self.text()) if self.text() else 0
+        width = pad + icon_w + text_w + (4 if text_w else 0) + self._arrow_width() + 3
+        return QSize(width, max(26, fm.height() + 10))
+
+    def minimumSizeHint(self) -> QSize:
+        fm, pad, icon_w = self._metrics()
+        text = self.text()
+        if len(text) <= 8:
+            text_w = fm.horizontalAdvance(text) + (4 if text else 0)
+        elif self.compact_text:
+            text_w = fm.horizontalAdvance(self.compact_text) + 4
+        else:
+            text_w = min(fm.horizontalAdvance(text), fm.horizontalAdvance("Wwww…"))
+        return QSize(pad + icon_w + text_w + self._arrow_width() + 3, self.sizeHint().height())
+
+    def _arrow_rect(self) -> QRectF:
+        w = self._arrow_width()
+        return QRectF(self.width() - w, 0, w, self.height())
+
+    def _part_at(self, pos) -> str:
+        return "menu" if not self._split or pos.x() >= self.width() - self._arrow_width() else "main"
+
+    # ---------------------------------------------------------------- events
+    def mousePressEvent(self, event):
+        if self._split and event.button() == Qt.MouseButton.LeftButton and self._part_at(event.position()) == "menu":
+            event.accept()
+            self.open_menu()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        part = self._part_at(event.position())
+        if part != self._hover_part:
+            self._hover_part = part
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_part = None
+        self.update()
+        super().leaveEvent(event)
+
+    def keyPressEvent(self, event):
+        if self._split and event.key() == Qt.Key.Key_Down:
+            self.open_menu()
+            return
+        super().keyPressEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self.updateGeometry()
+
+    def setText(self, text: str):  # noqa: N802 (Qt naming)
+        super().setText(text)
+        self.updateGeometry()
+        self.update()
+
+    # --------------------------------------------------------------- painting
+    def paintEvent(self, event):
+        t = ThemeManager.current()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        enabled = self.isEnabled()
+        frame = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        down = self.isDown() or self._menu_open
+        primary = self._variant == "primary" and enabled
+        if primary:
+            fill = qc(t.accent_pressed if down and not self._split else t.accent_hover if self.underMouse() and not self._split else t.accent)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(fill)
+            p.drawRoundedRect(frame, 6, 6)
+            fg = arrow_color = QColor("#FFFFFF")
+        else:
+            if self._variant != "ghost":
+                p.setPen(QPen(qc(t.control_border), 1))
+                p.setBrush(qc(t.control))
+                p.drawRoundedRect(frame, 6, 6)
+            fg = qc(t.text if enabled else t.text_disabled)
+            arrow_color = qc(t.text_secondary if enabled else t.text_disabled)
+        if enabled and (self.underMouse() or down):
+            overlay = qc(t.pressed if down else t.hover)
+            if primary:
+                overlay = QColor(0, 0, 0, 40 if down else 22)
+            area = frame
+            if self._split and self._hover_part and not (down and self._menu_open):
+                arrow = self._arrow_rect()
+                area = arrow.adjusted(0, 0.5, -0.5, -0.5) if self._hover_part == "menu" else QRectF(frame.left(), frame.top(), arrow.left() - frame.left(), frame.height())
+            elif self._split and self._menu_open:
+                area = self._arrow_rect().adjusted(0, 0.5, -0.5, -0.5)
+            path = QPainterPath()
+            path.addRoundedRect(frame, 6, 6)
+            clip = QPainterPath()
+            clip.addRect(area)
+            p.fillPath(path.intersected(clip), overlay)
+        fm, pad, icon_w = self._metrics()
+        x = frame.left() + pad
+        arrow = self._arrow_rect()
+        if self._icon_name:
+            icons.paint_icon(p, self._icon_name, QRectF(x, frame.center().y() - 8, 16, 16), fg)
+            x += icon_w
+        if self.text():
+            available = max(0, int(arrow.left() - x - 2))
+            text = self.text()
+            if self.compact_text and fm.horizontalAdvance(text) > available:
+                text = self.compact_text
+            p.setPen(fg)
+            p.setFont(self.font())
+            p.drawText(QRectF(x, frame.top(), available, frame.height()),
+                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                       fm.elidedText(text, Qt.TextElideMode.ElideRight, available))
+        if self._split:
+            divider = QColor(fg)
+            divider.setAlphaF(0.35)
+            p.setPen(QPen(divider, 1))
+            p.drawLine(QPointF(arrow.left() + 0.5, frame.top() + 5), QPointF(arrow.left() + 0.5, frame.bottom() - 5))
+        cx, cy = arrow.center().x() - (0 if self._split else 2), frame.center().y()
+        chevron = QPainterPath(QPointF(cx - 3.5, cy - 1.75))
+        chevron.lineTo(cx, cy + 1.75)
+        chevron.lineTo(cx + 3.5, cy - 1.75)
+        p.setPen(QPen(arrow_color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(chevron)
+        if self.hasFocus():
+            p.setPen(QPen(qc(t.accent), 2))
+            p.drawRoundedRect(frame.adjusted(1, 1, -1, -1), 5, 5)
+        p.end()
+
+
+def menu_button(text: str, entries=(), icon_name: str | None = None, variant: str = "secondary",
+                tooltip: str = "") -> DropdownButton:
+    """A ``DropdownButton`` filled from ``(text, callback)`` pairs; None as the callback adds a separator."""
+    button = DropdownButton(text, icon_name, variant=variant)
+    menu = button.dropdown_menu()
+    for entry_text, callback in entries:
+        if callback is None:
+            if entry_text:
+                menu.addAction(entry_text).setEnabled(False)
+            else:
+                menu.addSeparator()
+        else:
+            menu.addAction(entry_text, callback)
+    if tooltip:
+        button.setToolTip(tooltip)
+    return button
 
 
 class SearchField(QLineEdit):
@@ -524,13 +777,17 @@ class EmptyState(QWidget):
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.addStretch(3)
-        col = QVBoxLayout()
+        # The column lives in its own widget so the stylesheet (heading font) is applied to
+        # its labels before the layout measures them, and so wrapped text gets a stable width.
+        content = QWidget()
+        content.setFixedWidth(420)
+        col = QVBoxLayout(content)
+        col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(10)
-        col.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         if app_icon is not None and not app_icon.isNull():
             ic = AppIconLabel(app_icon, 72)
             col.addWidget(ic, 0, Qt.AlignmentFlag.AlignHCenter)
-            col.addSpacing(6)
+            col.addSpacing(14)
         title = label("Open a folder of drawings", "heading")
         title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         col.addWidget(title)
@@ -548,8 +805,31 @@ class EmptyState(QWidget):
         self.recent_box = QVBoxLayout()
         self.recent_box.setSpacing(0)
         col.addLayout(self.recent_box)
-        outer.addLayout(col)
+        outer.addWidget(content, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch(4)
+        self._content = content
+        self._col = col
+
+    def _remeasure(self):
+        # Heading/section fonts come from the stylesheet; polish first so the layout measures
+        # the real text heights instead of the default-font ones.
+        for w in self._content.findChildren(QWidget):
+            w.ensurePolished()
+            w.updateGeometry()
+        self._col.invalidate()
+        self._content.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # A definite width (never wider than the window) lets the wrapped subtitle report its height.
+        w = max(200, min(420, self.width() - 48))
+        if w != self._content.width():
+            self._content.setFixedWidth(w)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._remeasure()
+        QTimer.singleShot(0, self._remeasure)
 
     def set_recent(self, folders: list[str]):
         while self.recent_box.count():

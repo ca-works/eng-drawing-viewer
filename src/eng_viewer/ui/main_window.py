@@ -34,8 +34,8 @@ from .theme import IS_MAC, ThemeManager
 from .thumbnails import ThumbnailProvider
 from .widgets import (
     SegmentedControl,
-    ElidedLabel, EmptyState, Spinner, Toast, assign_mnemonics, key_sequences, label, primary_button, secondary_button,
-    separator, tip, tool_button,
+    ElidedLabel, EmptyState, Spinner, Toast, assign_mnemonics, is_drag_background, key_sequences, label, primary_button,
+    secondary_button, separator, tip, tool_button,
 )
 
 ZOOM_PRESETS = [25, 50, 75, 100, 125, 150, 200, 300, 400, 800, 1600]
@@ -82,7 +82,14 @@ class _SaveBridge(QObject):
 
 
 class Toolbar(QWidget):
-    """Top bar. Empty areas drag the window (it sits in the title bar on macOS)."""
+    """Top bar. On macOS it sits in the title bar, and its empty areas move the window.
+
+    Empty means the bar itself, the document title, spacers and layout containers, so the
+    title area between the workspace tabs and the buttons drags like a native title bar.
+    Buttons, the workspace tabs and fields keep their clicks. The drag is the window
+    server's own (``startSystemMove``), so it follows the pointer across displays and
+    Spaces; a double-click does what System Settings asks (zoom, minimize or nothing).
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -90,22 +97,27 @@ class Toolbar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
     def _in_title_bar(self) -> bool:
-        return bool(getattr(self.window(), "_unified", False))
+        w = self.window()
+        return bool(getattr(w, "_unified", False)) and not w.isFullScreen()
+
+    def drag_area_at(self, pos) -> bool:
+        return self._in_title_bar() and is_drag_background(self, pos)
 
     def mousePressEvent(self, event):
-        if (self._in_title_bar() and event.button() == Qt.MouseButton.LeftButton
-                and self.childAt(event.position().toPoint()) in (None, self)):
+        if event.button() == Qt.MouseButton.LeftButton and self.drag_area_at(event.position().toPoint()):
             handle = self.window().windowHandle()
-            if handle is not None:
-                handle.startSystemMove()
+            if handle is not None and handle.startSystemMove():
                 event.accept()
                 return
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        if self._in_title_bar() and self.childAt(event.position().toPoint()) in (None, self):
-            w = self.window()
-            w.showNormal() if w.isMaximized() else w.showMaximized()
+        if event.button() == Qt.MouseButton.LeftButton and self.drag_area_at(event.position().toPoint()):
+            from ..platform.macos import title_bar_double_click
+
+            if not title_bar_double_click(self.window()):
+                w = self.window()
+                w.showNormal() if w.isMaximized() else w.showMaximized()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -505,8 +517,26 @@ class MainWindow(QMainWindow):
         quit_act.setMenuRole(QAction.MenuRole.QuitRole)
 
         e = mb.addMenu("&Edit")
-        self.act_copy = self._act(e, "Copy Page as Image", self.copy_page_image, QKeySequence.StandardKey.Copy, "copy-image")
-        self.act_copy_name = self._act(e, "Copy Filename", self.copy_filename, "Ctrl+Shift+C", "file-text")
+        # One owner per key: these two follow the workspace (viewer / Image Editor wording in set_mode).
+        self.act_copy = self._act(e, "Copy Page as Image", lambda: self._copy_command(False), QKeySequence.StandardKey.Copy, "copy-image")
+        self.act_copy_name = self._act(e, "Copy Filename", lambda: self._copy_command(True), "Ctrl+Shift+C", "file-text")
+        e.addSeparator()
+        # Image Editor commands: enabled only in the Image workspace, where they own these keys
+        # (the viewer's Copy and Copy Filename are disabled there).
+        image = lambda name, *args: (lambda: self._image_command(name, *args))  # noqa: E731
+        self.image_actions = [
+            self._act(e, "Undo", image("history", False), QKeySequence.StandardKey.Undo, "undo"),
+            self._act(e, "Redo", image("history", True), [QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"], "redo"),
+            self._act(e, "Cut", image("cut"), QKeySequence.StandardKey.Cut),
+            self._act(e, "Paste as New Layer", image("paste"), QKeySequence.StandardKey.Paste),
+            self._act(e, "Paste as New Document", image("paste", True)),
+            self._act(e, "Duplicate Layer / Layer via Copy", image("duplicate_layer"), "Ctrl+J"),
+            # Ctrl+Shift+J switches to the Image Editor on Windows and Linux.
+            self._act(e, "Layer via Cut", image("layer_via_cut"), "Ctrl+Shift+J" if IS_MAC else None),
+            self._act(e, "Import Image as Layer…", image("import_layer"), None, "image"),
+        ]
+        for action in self.image_actions:
+            action.setEnabled(False)
         e.addSeparator()
         self._act(e, "Filter Library", self._focus_search, QKeySequence.StandardKey.Find, "search")
 
@@ -1056,6 +1086,9 @@ class MainWindow(QMainWindow):
                   self.act_queue_add, self.act_save_png, self.act_zoom_in, self.act_zoom_out, self.act_actual,
                   self.act_fit_width, self.act_fit_page, self.act_first, self.act_last, self.act_reveal):
             w.setEnabled(has_doc)
+        if self._mode == "image":
+            self.act_copy.setEnabled(True)
+            self.act_copy_name.setEnabled(True)
         self.act_prev_doc.setEnabled(self._adjacent_doc(-1) is not None)
         self.act_next_doc.setEnabled(self._adjacent_doc(1) is not None)
         self.act_rescan.setEnabled(self.source_root is not None or self.source_files is not None)
@@ -1410,7 +1443,25 @@ class MainWindow(QMainWindow):
         {"viewer": self.act_mode_viewer, "tools": self.act_mode_tools, "image": self.act_mode_image,
          "vector": self.act_mode_vector, "pdf_edit": self.act_mode_pdf_edit}[mode].setChecked(True)
         self.title_label.setText((Path(self.doc_path).name if self.doc_path else "") if mode == "viewer" else "")
+        for action in self.image_actions:
+            action.setEnabled(mode == "image")
+        self.act_copy.setText("Copy Layer or Selection" if mode == "image" else "Copy Page as Image")
+        self.act_copy_name.setText("Copy Merged" if mode == "image" else "Copy Filename")
         self._update_nav()
+
+    def _copy_command(self, alternate):
+        """⌘C / ⇧⌘C: copy the page or its filename in the viewer; the layer or merged image in the Image Editor."""
+        if self._mode == "image" and self.image_editor is not None:
+            self.image_editor.copy(merged=alternate)
+        elif alternate:
+            self.copy_filename()
+        else:
+            self.copy_page_image()
+
+    def _image_command(self, name, *args):
+        if self._mode != "image" or self.image_editor is None:
+            return
+        getattr(self.image_editor, name)(*args)
 
     def open_image_editor(self, path=None):
         self.set_mode("image")
