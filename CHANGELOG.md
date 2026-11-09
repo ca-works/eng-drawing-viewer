@@ -1,13 +1,14 @@
 # Changelog
 
-## 2.3.2 — macOS Apple Silicon (9 November 2026)
+## 2.3.2 — Windows and macOS Apple Silicon (9 November 2026)
 
-Markup improvements, matching Windows 2.3.2. macOS Apple Silicon only; Universal Mac and Linux stay at 2.3.1.
+Windows and macOS Apple Silicon only; Universal Mac and Linux stay at 2.3.1.
 
 ### New
+- **Windows: one-file installer.** Windows now downloads as a single Setup program: it installs for your user (no administrator rights), adds a Start menu entry and an optional desktop shortcut, and uninstalls from Settings > Apps.
 - **MARK: select and resize.** Click an annotation to show resize handles; drag them to resize (Shift keeps the proportions) or drag the object to move it.
 - **MARK: multiple selection.** Drag a rectangle on empty space, or Shift-click to add or remove objects, then move, delete or copy them together.
-- **MARK: copy and paste between drawings.** ⌘C copies the selected annotations as editable objects; ⌘V pastes them on the same drawing or another one. Pasted callouts continue the numbering and keep their comments. With nothing selected, ⌘C still copies the marked page as an image.
+- **MARK: copy and paste between drawings.** Ctrl+C (⌘C on Mac) copies the selected annotations as editable objects; Ctrl+V (⌘V) pastes them on the same drawing or another one. Pasted callouts continue the numbering and keep their comments. With nothing selected, Ctrl+C still copies the marked page as an image.
 
 ## 2.3.1 — macOS Apple Silicon (4 November 2026)
 
@@ -24,7 +25,7 @@ docs/TEST_RESULTS.md.
   snapping guides, arrow-key nudging, numeric X/Y/W/H/angle, Fit to canvas, Reveal All, Flip and
   Reset. Layers keep their original pixels, so repeated transforms never compound blur.
 - **Photoshop clipboard keys**: ⌘C copies the layer or selected pixels, ⇧⌘C the merged image, ⌘X
-  cuts, ⌘V pastes as a new layer (or a new document when none is open), ⌘J duplicates or makes a
+  cuts, Ctrl+V (⌘V) pastes as a new layer (or a new document when none is open), ⌘J duplicates or makes a
   layer via copy, ⇧⌘J layer via cut. Copies keep masks, opacity, blend mode and position inside the
   editor and reach other apps as PNG/TIFF in the chosen clipboard format.
 - **Paint Bucket (G)** with tolerance, contiguous, anti-aliasing, selection limits, sample all
