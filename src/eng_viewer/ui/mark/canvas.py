@@ -4,19 +4,31 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QEasingCurve, QLineF, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QUndoStack
+from PySide6.QtGui import QColor, QCursor, QImage, QMouseEvent, QPainter, QPainterPath, QUndoStack
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsView
 
 from ...core.render_service import RenderService
 from ..page_view import PageView
-from .commands import AddItems, ChangeStyle, EditText, MoveItems, RemoveItems, Renumber, SetComment
-from .items import ANNOTATION, AnnotationMixin, ArrowItem, BubbleItem, EllipseItem, GhostItem, StrokeItem, TextItem
+from .commands import AddItems, ChangeStyle, EditText, MoveItems, RemoveItems, Renumber, ResizeItems, SetComment
+from .items import (ANNOTATION, AnnotationMixin, ArrowItem, BubbleItem, EllipseItem, GhostItem, SelectionOverlay,
+                    StrokeItem, TextItem, item_from_dict)
 
 TOOLS = ("select", "pen", "highlighter", "text", "arrow", "circle", "bubble", "eraser")
 TOOL_NAMES = {
     "select": "Select", "pen": "Pen", "highlighter": "Highlighter", "text": "Text",
     "arrow": "Arrow", "circle": "Circle", "bubble": "Callout", "eraser": "Eraser",
 }
+
+
+# Application-wide annotation clipboard: survives switching between drawings/pages.
+_CLIPBOARD: dict = {"items": [], "n": 0, "src": None}
+PASTE_OFFSET = 14.0
+HANDLE_HIT_PX = 9.0
+MIN_RESIZE = 2.0
+
+
+def has_markup_clipboard() -> bool:
+    return bool(_CLIPBOARD["items"])
 
 
 class MarkCanvas(PageView):
@@ -48,7 +60,12 @@ class MarkCanvas(PageView):
         self._pulse_target: BubbleItem | None = None
         self._pulse_anim.valueChanged.connect(lambda v: self._pulse_target and self._pulse_target.set_pulse(float(v)))
         self._pulse_anim.finished.connect(lambda: self._pulse_target and self._pulse_target.set_pulse(0.0))
+        self.overlay = SelectionOverlay()
+        self.scene_obj.addItem(self.overlay)
+        self._resize: dict | None = None
         self.scene_obj.selectionChanged.connect(self._on_selection)
+        self.zoomChanged.connect(lambda _z: self._refresh_overlay())
+        self.undo_stack.indexChanged.connect(lambda _i: self._refresh_overlay())
         self.setRubberBandSelectionMode(Qt.ItemSelectionMode.IntersectsItemShape)
         self.set_tool("pen")
 
@@ -230,6 +247,170 @@ class MarkCanvas(PageView):
         except RuntimeError:
             return
         self.selectionChanged.emit(sel)
+        self._refresh_overlay()
+
+    # ----------------------------------------------- selection box + resize
+    def _refresh_overlay(self):
+        try:
+            sel = self.selected_annotations() if self.tool == "select" else []
+        except RuntimeError:
+            return
+        if not sel:
+            self.overlay.setVisible(False)
+            return
+        box = QRectF()
+        for i, it in enumerate(sel):
+            r = it.geom_rect().normalized()
+            box = r if i == 0 else box.united(r)
+        self.overlay.set_box(box, self.zoom)
+        self.overlay.setVisible(True)
+
+    def items_geometry_changed(self):
+        self._refresh_overlay()
+
+    def _handle_at(self, view_pos: QPointF) -> str | None:
+        if not self.overlay.isVisible() or self.tool != "select":
+            return None
+        best, best_d = None, HANDLE_HIT_PX
+        for name, pt in self.overlay.handle_points().items():
+            v = self.mapFromScene(pt)
+            d = max(abs(v.x() - view_pos.x()), abs(v.y() - view_pos.y()))
+            if d <= best_d:
+                best, best_d = name, d
+        return best
+
+    _HANDLE_CURSORS = {
+        "n": Qt.CursorShape.SizeVerCursor, "s": Qt.CursorShape.SizeVerCursor,
+        "e": Qt.CursorShape.SizeHorCursor, "w": Qt.CursorShape.SizeHorCursor,
+        "nw": Qt.CursorShape.SizeFDiagCursor, "se": Qt.CursorShape.SizeFDiagCursor,
+        "ne": Qt.CursorShape.SizeBDiagCursor, "sw": Qt.CursorShape.SizeBDiagCursor,
+    }
+
+    def _begin_resize(self, handle: str, pos: QPointF):
+        items = self.selected_annotations()
+        box = QRectF()
+        for i, it in enumerate(items):
+            r = it.geom_rect().normalized()
+            box = r if i == 0 else box.united(r)
+        self._resize = {"h": handle, "start": QPointF(pos), "items": items, "old": box,
+                        "before": [it.get_state() for it in items]}
+
+    def _update_resize(self, pos: QPointF, mods):
+        rs = self._resize
+        old: QRectF = rs["old"]
+        h = rs["h"]
+        dx, dy = pos.x() - rs["start"].x(), pos.y() - rs["start"].y()
+        l, t, r, b = old.left(), old.top(), old.right(), old.bottom()
+        if "w" in h:
+            l = min(l + dx, r - MIN_RESIZE)
+        if "e" in h:
+            r = max(r + dx, l + MIN_RESIZE)
+        if "n" in h:
+            t = min(t + dy, b - MIN_RESIZE)
+        if "s" in h:
+            b = max(b + dy, t + MIN_RESIZE)
+        ow, oh = old.width(), old.height()
+        if (mods & Qt.KeyboardModifier.ShiftModifier) and ow > 1e-6 and oh > 1e-6:
+            nw, nh = r - l, b - t
+            horiz, vert = ("e" in h or "w" in h), ("n" in h or "s" in h)
+            if horiz and vert:
+                k = max(nw / ow, nh / oh)
+            elif horiz:
+                k = nw / ow
+            else:
+                k = nh / oh
+            nw, nh = ow * k, oh * k
+            if horiz and vert:
+                l, r = (r - nw, r) if "w" in h else (l, l + nw)
+                t, b = (b - nh, b) if "n" in h else (t, t + nh)
+            elif horiz:
+                l, r = (r - nw, r) if "w" in h else (l, l + nw)
+                cy = old.center().y()
+                t, b = cy - nh / 2, cy + nh / 2
+            else:
+                t, b = (b - nh, b) if "n" in h else (t, t + nh)
+                cx = old.center().x()
+                l, r = cx - nw / 2, cx + nw / 2
+        new = QRectF(QPointF(l, t), QPointF(r, b))
+        for it, st in zip(rs["items"], rs["before"]):
+            it.set_state(it.scaled_state(st, old, new))
+        self._refresh_overlay()
+
+    def _finish_resize(self):
+        rs, self._resize = self._resize, None
+        items = rs["items"]
+        after = [it.get_state() for it in items]
+        if any(a != b for a, b in zip(after, rs["before"])):
+            label = f"Resize {len(items)} Items" if len(items) > 1 else f"Resize {TOOL_NAMES.get(items[0].kind, 'Item')}"
+            self.undo_stack.push(ResizeItems(self, items, rs["before"], after, label))
+            if any(isinstance(i, BubbleItem) for i in items):
+                self.bubblesChanged.emit()
+        self._refresh_overlay()
+
+    @staticmethod
+    def _shift_as_ctrl(event):
+        """Shift-click toggles selection (Qt's native toggle key is Ctrl)."""
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            mods = (mods & ~Qt.KeyboardModifier.ShiftModifier) | Qt.KeyboardModifier.ControlModifier
+            return QMouseEvent(event.type(), event.position(), event.globalPosition(), event.button(),
+                               event.buttons(), mods)
+        return event
+
+    # ------------------------------------------------------ copy and paste
+    def copy_selection(self) -> int:
+        items = self.selected_annotations()
+        if not items:
+            return 0
+        items.sort(key=lambda i: (i.kind != "bubble", getattr(i, "number", 0), i.zValue()))
+        _CLIPBOARD["items"] = [i.to_dict() for i in items]
+        _CLIPBOARD["n"] = 0
+        _CLIPBOARD["src"] = id(self)
+        return len(items)
+
+    def paste(self) -> int:
+        if self.page_ref is None or not _CLIPBOARD["items"]:
+            return 0
+        self._finish_text_edit()
+        fam = self.font().family()
+        new = [it for it in (item_from_dict(d, fam) for d in _CLIPBOARD["items"]) if it is not None]
+        if not new:
+            return 0
+        _CLIPBOARD["n"] += 1
+        k = _CLIPBOARD["n"] if _CLIPBOARD["src"] == id(self) else _CLIPBOARD["n"] - 1
+        off = PASTE_OFFSET * k
+        base = self.next_number()
+        for i, b in enumerate(sorted((n for n in new if isinstance(n, BubbleItem)), key=lambda b: b.number)):
+            b.set_number(base + i)
+        box = QRectF()
+        for i, it in enumerate(new):
+            it.moveBy(off, off)
+            r = it.geom_rect().normalized()
+            box = r if i == 0 else box.united(r)
+        vis, page = self._visible_scene_rect(), self._page_rect()
+        dx = dy = 0.0
+        if not vis.intersects(box):
+            c = vis.intersected(page).center() if vis.intersects(page) else page.center()
+            dx, dy = c.x() - box.center().x(), c.y() - box.center().y()
+        moved = box.translated(dx, dy)
+        if moved.left() < page.left():
+            dx += page.left() - moved.left()
+        elif moved.right() > page.right():
+            dx -= min(moved.right() - page.right(), moved.left() - page.left())
+        if moved.top() < page.top():
+            dy += page.top() - moved.top()
+        elif moved.bottom() > page.bottom():
+            dy -= min(moved.bottom() - page.bottom(), moved.top() - page.top())
+        if dx or dy:
+            for it in new:
+                it.moveBy(dx, dy)
+        if self.tool != "select":
+            self.set_tool("select")
+        self.scene_obj.clearSelection()
+        self.undo_stack.push(AddItems(self, new, "Paste Markup" if len(new) > 1 else f"Paste {TOOL_NAMES.get(new[0].kind, 'Item')}"))
+        for it in new:
+            it.setSelected(True)
+        return len(new)
 
     # --------------------------------------------------------------- mouse
     def mousePressEvent(self, event):
@@ -243,7 +424,12 @@ class MarkCanvas(PageView):
         pos = self._scene_pos(event)
         tool = self.tool
         if tool == "select":
-            QGraphicsView.mousePressEvent(self, event)
+            handle = self._handle_at(event.position())
+            if handle:
+                self._begin_resize(handle, pos)
+                event.accept()
+                return
+            QGraphicsView.mousePressEvent(self, self._shift_as_ctrl(event))
             self._move_snapshot = {it: it.pos() for it in self.selected_annotations()}
             return
         if tool == "text":
@@ -294,6 +480,13 @@ class MarkCanvas(PageView):
             super().mouseMoveEvent(event)
             return
         pos = self._scene_pos(event)
+        if self._resize is not None:
+            self._update_resize(pos, event.modifiers())
+            event.accept()
+            return
+        if self.tool == "select" and not event.buttons():
+            h = self._handle_at(event.position())
+            self.viewport().setCursor(QCursor(self._HANDLE_CURSORS[h]) if h else self.tool_cursor())
         if self._drawing is not None:
             p = self._clamp(pos)
             if isinstance(self._drawing, StrokeItem):
@@ -317,6 +510,8 @@ class MarkCanvas(PageView):
             self.ghost.setPos(pos)
             self.ghost.setVisible(self._page_rect().contains(pos) or self.tool == "eraser")
         super().mouseMoveEvent(event)
+        if self.tool == "select" and self._move_snapshot:
+            self._refresh_overlay()
 
     def mouseReleaseEvent(self, event):
         if self._panning:
@@ -324,6 +519,10 @@ class MarkCanvas(PageView):
             return
         if event.button() != Qt.MouseButton.LeftButton:
             QGraphicsView.mouseReleaseEvent(self, event)
+            return
+        if self._resize is not None:
+            self._finish_resize()
+            event.accept()
             return
         if self._drawing is not None:
             item, self._drawing = self._drawing, None
@@ -351,7 +550,7 @@ class MarkCanvas(PageView):
                 self.undo_stack.push(RemoveItems(self, items, "Erase"))
             event.accept()
             return
-        QGraphicsView.mouseReleaseEvent(self, event)
+        QGraphicsView.mouseReleaseEvent(self, self._shift_as_ctrl(event))
         if self.tool == "select" and self._move_snapshot:
             moved = [it for it, p in self._move_snapshot.items() if it.scene() is self.scene_obj and it.pos() != p]
             if moved:
@@ -359,6 +558,7 @@ class MarkCanvas(PageView):
                 delta = first.pos() - self._move_snapshot[first]
                 self.undo_stack.push(MoveItems(moved, delta, "Move"))
             self._move_snapshot = {}
+            self._refresh_overlay()
 
     def mouseDoubleClickEvent(self, event):
         hit = self._annotation_at(event)
@@ -501,6 +701,8 @@ class MarkCanvas(PageView):
         """Paint only the markup into ``target`` (an image, or a PDF page in points)."""
         ghost_visible = self.ghost.isVisible()
         self.ghost.setVisible(False)
+        overlay_visible = self.overlay.isVisible()
+        self.overlay.setVisible(False)
         self.page_item.setVisible(False)
         AnnotationMixin.exporting = True
         try:
@@ -510,6 +712,7 @@ class MarkCanvas(PageView):
             AnnotationMixin.exporting = False
             self.page_item.setVisible(True)
             self.ghost.setVisible(ghost_visible)
+            self.overlay.setVisible(overlay_visible)
 
     def comments_text(self) -> str:
         lines = []

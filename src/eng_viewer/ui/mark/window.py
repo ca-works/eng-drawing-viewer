@@ -330,7 +330,9 @@ class MarkWindow(QMainWindow):
         self.act_redo.setShortcuts(key_sequences([QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"]))
         e.addAction(self.act_redo)
         e.addSeparator()
-        self.act_copy = act(e, "Copy Marked Page", self.copy_marked_page, QKeySequence.StandardKey.Copy)
+        self.act_copy = act(e, "Copy Selected Markup (or Marked Page)", self.copy_or_page, QKeySequence.StandardKey.Copy)
+        self.act_paste = act(e, "Paste Markup", self.paste_markup, QKeySequence.StandardKey.Paste)
+        act(e, "Copy Marked Page as Image", self.copy_marked_page)
         self.act_copy_comments = act(e, "Copy Numbered Comments", self.copy_comments, "Ctrl+Shift+C")
         e.addSeparator()
         self.act_delete = act(e, "Delete", self.canvas.delete_selected)
@@ -557,6 +559,20 @@ class MarkWindow(QMainWindow):
             return
         self.canvas.clear_all()
         self.toast.show_message("Markup cleared — Undo restores it", "undo")
+
+    def copy_or_page(self):
+        n = self.canvas.copy_selection()
+        if n:
+            self.toast.show_message(f"Copied {n} markup object{'s' if n != 1 else ''} — Ctrl+V pastes on any drawing", "copy-image")
+        else:
+            self.copy_marked_page()
+
+    def paste_markup(self):
+        n = self.canvas.paste()
+        if n:
+            self.toast.show_message(f"Pasted {n} markup object{'s' if n != 1 else ''}", "copy-image")
+        else:
+            self.toast.show_message("Nothing to paste — select markup and press Ctrl+C first", "copy-image")
 
     def copy_comments(self):
         text = self.canvas.comments_text()

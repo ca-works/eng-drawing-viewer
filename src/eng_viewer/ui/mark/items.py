@@ -55,6 +55,34 @@ class AnnotationMixin:
     def set_style(self, style: dict):
         pass
 
+    # --- geometry state (resize / clipboard) -----------------------------
+    def geom_rect(self) -> QRectF:
+        """Geometric bounds in scene coordinates (ignores stroke width)."""
+        return self.sceneBoundingRect()
+
+    def get_state(self) -> dict:
+        return {"pos": QPointF(self.pos())}
+
+    def set_state(self, st: dict):
+        self.prepareGeometryChange()
+        self.setPos(st["pos"])
+        self._apply_state(st)
+        self.update()
+
+    def _apply_state(self, st: dict):
+        pass
+
+    def scaled_state(self, st: dict, old: QRectF, new: QRectF) -> dict:
+        return dict(st)
+
+    def to_dict(self) -> dict:
+        d = {"type": self.kind, "x": self.pos().x(), "y": self.pos().y()}
+        d.update(self._extra_dict())
+        return d
+
+    def _extra_dict(self) -> dict:
+        return {}
+
     def paint_chrome(self, painter: QPainter, rect: QRectF):
         if AnnotationMixin.exporting:
             return
@@ -78,11 +106,6 @@ class AnnotationMixin:
         pad = 4.0 / scale
         r = rect.adjusted(-pad, -pad, pad, pad)
         painter.drawRoundedRect(r, 3 / scale, 3 / scale)
-        if selected:
-            painter.setBrush(QColor("#FFFFFF"))
-            hs = 3.0 / scale
-            for c in (r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()):
-                painter.drawEllipse(c, hs, hs)
         painter.restore()
 
 
@@ -540,4 +563,220 @@ class GhostItem(QGraphicsItem):
             arm = max(6.0 / scale, self.size * 2)
             painter.drawLine(QPointF(-arm, 0), QPointF(arm, 0))
             painter.drawLine(QPointF(0, -arm), QPointF(0, arm))
+        painter.restore()
+
+
+# ---------------------------------------------------------------- resize maths
+def _scales(old: QRectF, new: QRectF) -> tuple[float, float]:
+    sx = new.width() / old.width() if old.width() > 1e-6 else 1.0
+    sy = new.height() / old.height() if old.height() > 1e-6 else 1.0
+    return sx, sy
+
+
+def map_point(p: QPointF, old: QRectF, new: QRectF) -> QPointF:
+    sx, sy = _scales(old, new)
+    x = new.left() + (p.x() - old.left()) * sx if old.width() > 1e-6 else p.x() + new.left() - old.left()
+    y = new.top() + (p.y() - old.top()) * sy if old.height() > 1e-6 else p.y() + new.top() - old.top()
+    return QPointF(x, y)
+
+
+def _col(c: QColor) -> str:
+    return c.name(QColor.NameFormat.HexArgb)
+
+
+def _pt(p: QPointF) -> list:
+    return [p.x(), p.y()]
+
+
+def _unpt(v) -> QPointF:
+    return QPointF(v[0], v[1])
+
+
+# Stroke
+StrokeItem.geom_rect = lambda self: self._path.boundingRect().translated(self.pos())
+StrokeItem.get_state = lambda self: {"pos": QPointF(self.pos()), "points": [QPointF(p) for p in self.points]}
+
+
+def _stroke_apply(self, st):
+    self.points = [QPointF(p) for p in st["points"]]
+    self._rebuild()
+
+
+def _stroke_scaled(self, st, old, new):
+    pos = st["pos"]
+    return {"pos": pos, "points": [map_point(p + pos, old, new) - pos for p in st["points"]]}
+
+
+StrokeItem._apply_state = _stroke_apply
+StrokeItem.scaled_state = _stroke_scaled
+StrokeItem._extra_dict = lambda self: {"color": _col(self.color), "width": self.width, "alpha": self.alpha,
+                                       "highlighter": self.highlighter, "points": [_pt(p) for p in self.points]}
+
+
+# Arrow
+ArrowItem.geom_rect = lambda self: QRectF(self.p1, self.p2).normalized().translated(self.pos())
+ArrowItem.get_state = lambda self: {"pos": QPointF(self.pos()), "p1": QPointF(self.p1), "p2": QPointF(self.p2)}
+
+
+def _arrow_apply(self, st):
+    self.p1, self.p2 = QPointF(st["p1"]), QPointF(st["p2"])
+
+
+def _arrow_scaled(self, st, old, new):
+    pos = st["pos"]
+    return {"pos": pos, "p1": map_point(st["p1"] + pos, old, new) - pos, "p2": map_point(st["p2"] + pos, old, new) - pos}
+
+
+ArrowItem._apply_state = _arrow_apply
+ArrowItem.scaled_state = _arrow_scaled
+ArrowItem._extra_dict = lambda self: {"color": _col(self.color), "width": self.width, "p1": _pt(self.p1), "p2": _pt(self.p2)}
+
+
+# Ellipse
+EllipseItem.geom_rect = lambda self: self.rect.translated(self.pos())
+EllipseItem.get_state = lambda self: {"pos": QPointF(self.pos()), "rect": QRectF(self.rect)}
+
+
+def _ell_apply(self, st):
+    self.rect = QRectF(st["rect"])
+
+
+def _ell_scaled(self, st, old, new):
+    pos = st["pos"]
+    r = st["rect"].translated(pos)
+    a, b = map_point(r.topLeft(), old, new), map_point(r.bottomRight(), old, new)
+    return {"pos": pos, "rect": QRectF(a, b).normalized().translated(-pos)}
+
+
+EllipseItem._apply_state = _ell_apply
+EllipseItem.scaled_state = _ell_scaled
+EllipseItem._extra_dict = lambda self: {"color": _col(self.color), "width": self.width,
+                                        "rect": [self.rect.x(), self.rect.y(), self.rect.width(), self.rect.height()]}
+
+
+# Text
+TextItem.get_state = lambda self: {"pos": QPointF(self.pos()), "size": self.size_pt}
+
+
+def _text_apply(self, st):
+    self.size_pt = float(st["size"])
+    self._apply()
+
+
+def _text_scaled(self, st, old, new):
+    sx, sy = _scales(old, new)
+    k = max((abs(sx) + abs(sy)) / 2, 0.05)
+    return {"pos": map_point(st["pos"], old, new), "size": max(2.0, st["size"] * k)}
+
+
+TextItem._apply_state = _text_apply
+TextItem.scaled_state = _text_scaled
+TextItem._extra_dict = lambda self: {"color": _col(self.color), "size": self.size_pt, "text": self.toPlainText()}
+
+
+# Bubble
+def _bub_geom(self):
+    r = self.diameter / 2
+    return QRectF(self.pos().x() - r, self.pos().y() - r, self.diameter, self.diameter)
+
+
+def _bub_apply(self, st):
+    self.diameter = float(st["diameter"])
+    self._num_path = number_path(self.number, self.diameter, self._font_family)
+
+
+def _bub_scaled(self, st, old, new):
+    sx, sy = _scales(old, new)
+    k = max((abs(sx) + abs(sy)) / 2, 0.05)
+    return {"pos": map_point(st["pos"], old, new), "diameter": max(4.0, st["diameter"] * k)}
+
+
+BubbleItem.geom_rect = _bub_geom
+BubbleItem.get_state = lambda self: {"pos": QPointF(self.pos()), "diameter": self.diameter}
+BubbleItem._apply_state = _bub_apply
+BubbleItem.scaled_state = _bub_scaled
+BubbleItem._extra_dict = lambda self: {"diameter": self.diameter, "fill": self.fill, "number": self.number,
+                                       "comment": self.comment, "comment_removed": self.comment_removed}
+
+
+def item_from_dict(d: dict, font_family: str = ""):
+    """Rebuild an editable annotation from ``to_dict`` output (None if unknown)."""
+    t = d.get("type")
+    if t in ("pen", "highlighter"):
+        it = StrokeItem(QColor(d["color"]), d["width"], bool(d.get("highlighter")), d.get("alpha", 1.0))
+        it.points = [_unpt(p) for p in d["points"]]
+        it._rebuild()
+    elif t == "arrow":
+        it = ArrowItem(_unpt(d["p1"]), _unpt(d["p2"]), QColor(d["color"]), d["width"])
+    elif t == "circle":
+        it = EllipseItem(QRectF(*d["rect"]), QColor(d["color"]), d["width"])
+    elif t == "text":
+        it = TextItem(d.get("text", ""), QColor(d["color"]), d["size"])
+    elif t == "bubble":
+        it = BubbleItem(d.get("number", 1), d["diameter"], d.get("fill", False), font_family)
+        it.comment = d.get("comment", "")
+        it.comment_removed = d.get("comment_removed", False)
+    else:
+        return None
+    it.setPos(d.get("x", 0.0), d.get("y", 0.0))
+    return it
+
+
+class SelectionOverlay(QGraphicsItem):
+    """Bounding box with eight resize handles around the current selection.
+
+    Purely visual: the canvas does the hit-testing so handles keep a constant
+    on-screen size and grab area at every zoom level.
+    """
+
+    HANDLE_PX = 8.0
+    PAD_PX = 6.0
+
+    def __init__(self):
+        super().__init__()
+        self.setZValue(Z_GHOST - 1)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.box = QRectF()
+        self.scale_ = 1.0
+        self.setVisible(False)
+
+    def set_box(self, box: QRectF, view_scale: float):
+        self.prepareGeometryChange()
+        self.box = QRectF(box)
+        self.scale_ = max(view_scale, 1e-6)
+        self.setVisible(not box.isNull() or box.width() > 0 or box.height() > 0)
+        self.update()
+
+    def padded(self) -> QRectF:
+        pad = self.PAD_PX / self.scale_
+        return self.box.adjusted(-pad, -pad, pad, pad)
+
+    def handle_points(self) -> dict:
+        r = self.padded()
+        cx, cy = r.center().x(), r.center().y()
+        return {
+            "nw": QPointF(r.left(), r.top()), "n": QPointF(cx, r.top()), "ne": QPointF(r.right(), r.top()),
+            "e": QPointF(r.right(), cy), "se": QPointF(r.right(), r.bottom()), "s": QPointF(cx, r.bottom()),
+            "sw": QPointF(r.left(), r.bottom()), "w": QPointF(r.left(), cy),
+        }
+
+    def boundingRect(self) -> QRectF:
+        m = (self.PAD_PX + self.HANDLE_PX + 4) / self.scale_
+        return self.box.adjusted(-m, -m, m, m)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        if AnnotationMixin.exporting or not self.isVisible():
+            return
+        accent = qc(ThemeManager.current().accent)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(accent, 1.2)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(self.padded())
+        painter.setBrush(QColor("#FFFFFF"))
+        h = self.HANDLE_PX / 2 / self.scale_
+        for pt in self.handle_points().values():
+            painter.drawRect(QRectF(pt.x() - h, pt.y() - h, 2 * h, 2 * h))
         painter.restore()

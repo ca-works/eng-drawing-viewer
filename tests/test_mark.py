@@ -200,3 +200,68 @@ def test_composite_is_vector_sharp_and_hides_ui_chrome(canvas):
     assert blues == 0
     assert AnnotationMixin.exporting is False
     assert canvas.page_item.isVisible()
+
+
+# ---- selection, resize and copy/paste -------------------------------------
+def _handle_view_pos(c, name):
+    return c.mapFromScene(c.overlay.handle_points()[name])
+
+
+def test_resize_handles_shift_and_undo(canvas):
+    canvas.set_tool("circle")
+    drag(canvas, [QPoint(300, 250), QPoint(400, 300)])  # 100x50 ellipse
+    ell = [i for i in canvas.annotations() if i.kind == "circle"][0]
+    canvas.set_tool("select")
+    ell.setSelected(True)
+    before = ell.geom_rect()
+    assert canvas.overlay.isVisible()
+    h = _handle_view_pos(canvas, "se")
+    drag(canvas, [h, h + QPoint(40, 5)])
+    after = ell.geom_rect()
+    assert after.width() > before.width() + 20
+    canvas.undo_stack.undo()
+    assert abs(ell.geom_rect().width() - before.width()) < 0.01
+    canvas.undo_stack.redo()
+    assert abs(ell.geom_rect().width() - after.width()) < 0.01
+    # Shift keeps the aspect ratio
+    ratio = ell.geom_rect().width() / ell.geom_rect().height()
+    start = canvas.overlay.handle_points()["se"]
+    canvas._begin_resize("se", start)
+    canvas._update_resize(start + QPointF(60, 3), Qt.KeyboardModifier.ShiftModifier)
+    canvas._finish_resize()
+    r = ell.geom_rect()
+    assert abs(r.width() / r.height() - ratio) < 0.01
+
+
+def test_marquee_shift_click_and_copy_paste_between_drawings(canvas, qtbot, render, corpus):
+    canvas.set_tool("bubble")
+    click(canvas, QPoint(250, 250))
+    click(canvas, QPoint(350, 250))
+    canvas.bubbles()[0].comment = "first"
+    canvas.set_tool("select")
+    drag(canvas, [QPoint(200, 200), QPoint(420, 300)])  # marquee around both
+    assert len(canvas.selected_annotations()) == 2
+    canvas.scene_obj.clearSelection()
+    click(canvas, QPoint(250, 250))
+    QTest.mouseClick(canvas.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, QPoint(350, 250))
+    assert len(canvas.selected_annotations()) == 2
+    assert canvas.copy_selection() == 2
+    assert canvas.paste() == 2  # same drawing: offset, numbers continue
+    assert sorted(b.number for b in canvas.bubbles()) == [1, 2, 3, 4]
+    canvas.undo_stack.undo()
+    assert len(canvas.bubbles()) == 2
+    # another drawing
+    path = str(corpus["multi"])
+    page = pymupdf.open(path)[0]
+    other = MarkCanvas(render, ToolSettings())
+    other.resize(1000, 700)
+    qtbot.addWidget(other)
+    other.show()
+    other.set_page(PageRef(path, 0, page.rect.width, page.rect.height, PageRef.stamp_for(path)))
+    other.set_zoom_percent(100, animate=False)
+    assert other.paste() == 2
+    assert [b.number for b in other.bubbles()] == [1, 2]
+    assert [b.comment for b in other.bubbles()] == ["first", ""]
+    assert len(other.selected_annotations()) == 2
+    other.delete_selected()
+    assert not other.has_markup()

@@ -129,3 +129,26 @@ class Renumber(QUndoCommand):
 
     def undo(self):
         self._apply(self.before)
+
+
+class ResizeItems(QUndoCommand):
+    """Geometry change of one or more items (resize handles)."""
+
+    def __init__(self, canvas, items, before: list[dict], after: list[dict], text: str = "Resize"):
+        super().__init__(text)
+        self.canvas, self.items, self.before, self.after = canvas, list(items), before, after
+        self._first = True
+
+    def _apply(self, states):
+        for it, st in zip(self.items, states):
+            it.set_state(st)
+        self.canvas.items_geometry_changed()
+
+    def redo(self):
+        if self._first:
+            self._first = False  # the drag already applied it
+            return
+        self._apply(self.after)
+
+    def undo(self):
+        self._apply(self.before)
