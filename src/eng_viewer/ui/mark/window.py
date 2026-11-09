@@ -563,7 +563,7 @@ class MarkWindow(QMainWindow):
     def copy_or_page(self):
         n = self.canvas.copy_selection()
         if n:
-            self.toast.show_message(f"Copied {n} markup object{'s' if n != 1 else ''} — Ctrl+V pastes on any drawing", "copy-image")
+            self.toast.show_message(f"Copied {n} markup object{'s' if n != 1 else ''} — Cmd+V pastes on any drawing", "copy-image")
         else:
             self.copy_marked_page()
 
@@ -572,7 +572,7 @@ class MarkWindow(QMainWindow):
         if n:
             self.toast.show_message(f"Pasted {n} markup object{'s' if n != 1 else ''}", "copy-image")
         else:
-            self.toast.show_message("Nothing to paste — select markup and press Ctrl+C first", "copy-image")
+            self.toast.show_message("Nothing to paste — select markup and press Cmd+C first", "copy-image")
 
     def copy_comments(self):
         text = self.canvas.comments_text()

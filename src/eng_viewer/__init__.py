@@ -1,4 +1,4 @@
-﻿"""ENG Drawing Viewer — offline viewer, markup and PowerPoint export for engineering PDFs."""
+"""ENG Drawing Viewer — offline viewer, markup and PowerPoint export for engineering PDFs."""
 
 __version__ = "2.3.2"
 APP_NAME = "ENG Drawing Viewer"

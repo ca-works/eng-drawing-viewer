@@ -253,10 +253,10 @@ class MarkCanvas(PageView):
     def _refresh_overlay(self):
         try:
             sel = self.selected_annotations() if self.tool == "select" else []
+            if not sel:
+                self.overlay.setVisible(False)
+                return
         except RuntimeError:
-            return
-        if not sel:
-            self.overlay.setVisible(False)
             return
         box = QRectF()
         for i, it in enumerate(sel):
