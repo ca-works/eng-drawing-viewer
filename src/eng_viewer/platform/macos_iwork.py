@@ -102,13 +102,15 @@ def preview(source, out_dir):
     source, folder = Path(source), Path(out_dir)
     app = DOCUMENT_APPS[source.suffix.casefold()]
     # The app opens only the disposable copy. In particular, iWork autosave cannot touch the original.
+    # An alias lets macOS pass file access to the sandboxed iWork app for the existing copy.
     clone = folder / source.name
     output = folder / "Reference.pdf"
     try:
         _copy_reference(source, clone)
         settings = " with properties {skipped slides:true}" if app == "Keynote" else ""
         _run_script(app, f"""
-        set copiedDocument to open (POSIX file (item 1 of argv))
+        set inputAlias to (POSIX file (item 1 of argv)) as alias
+        set copiedDocument to open inputAlias
         if class of copiedDocument is list then set copiedDocument to item 1 of copiedDocument
         try
             export copiedDocument to (POSIX file (item 2 of argv)) as PDF{settings}
@@ -173,7 +175,7 @@ def keynote_insert(target, slides):
         set insertedSlides to {}
         try
             repeat with i from 5 to (count argv) by 6
-                set imageFile to POSIX file (item i of argv)
+                set imageFile to (POSIX file (item i of argv)) as alias
                 set imageWidth to (item (i + 1) of argv) as integer
                 set imageHeight to (item (i + 2) of argv) as integer
                 set imagePosition to {(item (i + 3) of argv) as integer, (item (i + 4) of argv) as integer}
