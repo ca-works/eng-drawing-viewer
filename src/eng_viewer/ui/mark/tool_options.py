@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QConicalGradient, QFont, QFontMetrics, QPainte
 from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 from ..theme import ThemeManager, qc
-from .items import BUBBLE_RED, BubbleItem, number_path
+from .items import BUBBLE_RED, SYMBOL_TOOLS, BubbleItem, _pen, symbol_path, number_path
 
 PRESET_COLORS = [
     ("Black", "#141414"), ("Red", "#E5202A"), ("Blue", "#1E5ADC"),
@@ -22,6 +22,8 @@ DEFAULTS = {
     "text": {"color": "#E5202A", "size": 18.0},
     "arrow": {"color": "#E5202A", "size": 2.0},
     "circle": {"color": "#E5202A", "size": 2.0},
+    "checkmark": {"color": "#1E9646", "size": 24.0, "width": 2.5},
+    "cross": {"color": "#E5202A", "size": 24.0, "width": 2.5},
     "bubble": {"size": 30.0, "fill": False},
     "eraser": {"size": 14.0},
     "select": {},
@@ -34,6 +36,8 @@ RANGES = {
     "text": (4.0, 144.0, "pt", "Text size"),
     "arrow": (0.25, 24.0, "pt", "Thickness"),
     "circle": (0.25, 24.0, "pt", "Thickness"),
+    "checkmark": (4.0, 240.0, "pt", "Symbol size"),
+    "cross": (4.0, 240.0, "pt", "Symbol size"),
     "bubble": (8.0, 600.0, "pt", "Bubble size"),
     "eraser": (4.0, 80.0, "px", "Eraser size"),
 }
@@ -47,6 +51,9 @@ class ToolSettings:
                 self._data[tool].update({k: v for k, v in values.items() if k in DEFAULTS[tool]})
         for tool, (lo, hi, _u, _l) in RANGES.items():
             self._data[tool]["size"] = min(max(float(self._data[tool]["size"]), lo), hi)
+
+        for tool in SYMBOL_TOOLS:
+            self._data[tool]["width"] = min(max(float(self._data[tool]["width"]), 0.25), 24.0)
 
     def get(self, tool: str) -> dict:
         return self._data.get(tool, {})
@@ -89,6 +96,9 @@ def sample_extent(tool: str, st: dict, ppp: float, number: int = 1) -> QSizeF:
         f.setPixelSize(max(1, round(size * ppp)))
         fm = QFontMetrics(f)
         return QSizeF(fm.horizontalAdvance("Aa Text 12") + 8, fm.height() + 4)
+    if tool in SYMBOL_TOOLS:
+        extent = (size + st["width"]) * ppp + 8
+        return QSizeF(extent, extent)
     if tool == "bubble":
         d = size * ppp + BubbleItem.stroke_for(size) * ppp + 4
         return QSizeF(d, d)
@@ -161,6 +171,11 @@ def paint_sample(p: QPainter, rect: QRectF, tool: str, st: dict, ppp: float, num
         p.setFont(f)
         p.setPen(color)
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Aa Text 12")
+    elif tool in SYMBOL_TOOLS:
+        p.translate(c)
+        p.setPen(_pen(color, st["width"] * ppp))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(symbol_path(tool, size * ppp, size * ppp))
     elif tool == "bubble":
         d = size * ppp
         sw = BubbleItem.stroke_for(size) * ppp

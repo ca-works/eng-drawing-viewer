@@ -84,7 +84,8 @@ def _page_info(state: _State, args: dict) -> tuple[dict, None]:
     doc = state.doc(args["path"])
     limit = int(args.get("size_limit", 400))
     sizes = []
-    for i in range(min(doc.page_count, limit)):
+    first = int(args.get("first_page", 0))
+    for i in range(first, min(doc.page_count, first + limit)):
         r = doc.load_page(i).rect
         sizes.append((float(r.width), float(r.height)))
     meta = doc.metadata or {}

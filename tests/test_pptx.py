@@ -5,6 +5,8 @@ import pytest
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.oxml import parse_xml
+from pptx.oxml.ns import nsdecls, qn
 from pptx.util import Inches
 from PySide6.QtGui import QColor, QImage
 
@@ -86,6 +88,30 @@ def test_insert_into_existing_at_position(tmp_path):
                                   {"image": img, "img_w": 10, "img_h": 10, "title": "New B"}]})
     titles = [s.shapes.title.text if s.shapes.title is not None else "" for s in Presentation(str(p)).slides]
     assert titles == ["Existing 1", "New A", "New B", "Existing 2", "Existing 3"]
+
+
+def test_insert_remaps_preceding_background_picture(tmp_path):
+    prs = Presentation()
+    first = prs.slides.add_slide(prs.slide_layouts[5])
+    first.shapes.title.text = "Existing foreground"
+    background = _png(tmp_path / "background.png", 20, 20, (255, 0, 0))
+    drawing = _png(tmp_path / "drawing.png", 10, 10)
+    _, rid = first.part.get_or_add_image_part(background)
+    first._element.cSld.insert(0, parse_xml(
+        f'<p:bg {nsdecls("p", "a", "r")}><p:bgPr><a:blipFill><a:blip r:embed="{rid}"/>'
+        '<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst/></p:bgPr></p:bg>'))
+    path = tmp_path / "deck.pptx"
+    prs.save(path)
+    pptx_export.build({"output": str(path), "template": str(path), "mode": "existing",
+                       "start_slide": 2, "title_mode": "none",
+                       "slides": [{"image": drawing, "img_w": 10, "img_h": 10}]})
+    saved = Presentation(path)
+    original, added = saved.slides
+    assert added.slide_layout == original.slide_layout
+    assert len(added.shapes) == 1 and not _texts(added)
+    copied = added._element.cSld.find(qn("p:bg"))
+    embed = next(copied.iter(qn("a:blip"))).get(qn("r:embed"))
+    assert added.part.related_part(embed).blob == Path(background).read_bytes()
 
 
 def test_reuse_existing_slides_then_append(tmp_path):

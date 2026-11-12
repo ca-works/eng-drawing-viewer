@@ -10,10 +10,13 @@ from __future__ import annotations
 import math
 import os
 import tempfile
+from copy import deepcopy
 
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.oxml.ns import qn
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.util import Emu, Inches, Pt
 
 SLIDE_SIZES = {"16:9": (Inches(13.333), Inches(7.5)), "4:3": (Inches(10), Inches(7.5))}
@@ -46,6 +49,48 @@ def _remove_empty_placeholders(slide, keep_title: bool):
         if t in (PP_PLACEHOLDER.PICTURE, PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE,
                  PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE):
             ph._element.getparent().remove(ph._element)
+
+
+def _inherit_background(slide, preceding):
+    """Reuse the layout/master chain and copy slide-local background overrides."""
+    source, target = preceding._element, slide._element
+    if "showMasterSp" in source.attrib:
+        target.set("showMasterSp", source.get("showMasterSp"))
+    color_map = source.find(qn("p:clrMapOvr"))
+    if color_map is not None:
+        default_map = target.find(qn("p:clrMapOvr"))
+        if default_map is not None:
+            target.remove(default_map)
+        target.insert(1, deepcopy(color_map))
+    for rel in preceding.part.rels.values():
+        if rel.reltype == RT.THEME_OVERRIDE and not rel.is_external:
+            slide.part.relate_to(rel.target_part, rel.reltype)
+
+    background = source.cSld.find(qn("p:bg"))
+    if background is not None:
+        background = deepcopy(background)
+        rel_prefix = qn("r:id").split("}")[0] + "}"
+        rel_ids = {}
+        for element in background.iter():
+            for name, rid in element.attrib.items():
+                if not name.startswith(rel_prefix):
+                    continue
+                if rid not in rel_ids:
+                    rel = preceding.part.rels.get(rid)
+                    if rel is None:
+                        return  # leave the inherited layout background if the override has a broken reference
+                    rel_ids[rid] = slide.part.relate_to(
+                        rel.target_ref if rel.is_external else rel.target_part, rel.reltype, rel.is_external)
+                element.set(name, rel_ids[rid])
+        target.cSld.insert(0, background)
+
+
+def _remove_inherited_placeholders(slide, title_mode):
+    keep = {"title": (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE),
+            "subtitle": (PP_PLACEHOLDER.SUBTITLE,)}.get(title_mode, ())
+    for placeholder in list(slide.placeholders):
+        if placeholder.placeholder_format.type not in keep:
+            placeholder._element.getparent().remove(placeholder._element)
 
 
 def _place_filename(slide, text: str, mode: str, sw: int, sh: int, new_slide: bool):
@@ -135,6 +180,12 @@ def build(spec: dict) -> dict:
     sld_list = prs.slides._sldIdLst
     insert_at = min(start - 1, len(prs.slides)) if mode == "existing" else len(prs.slides)
 
+    preceding = None
+    if mode == "existing" and insert_at:
+        preceding = prs.slides[insert_at - 1]
+    if mode == "existing" and existing_mode == "reuse" and len(prs.slides):
+        preceding = prs.slides[-1]  # only the overflow slides are generated
+
     count = 0
     for i, item in enumerate(spec["slides"]):
         new_slide = True
@@ -142,8 +193,13 @@ def build(spec: dict) -> dict:
             slide = prs.slides[start - 1 + i]
             new_slide = False
         else:
-            slide = prs.slides.add_slide(layout)
-            _remove_empty_placeholders(slide, keep_title=(title_mode == "title"))
+            if preceding is not None:
+                slide = prs.slides.add_slide(preceding.slide_layout)
+                _remove_inherited_placeholders(slide, title_mode)
+                _inherit_background(slide, preceding)
+            else:
+                slide = prs.slides.add_slide(layout)
+                _remove_empty_placeholders(slide, keep_title=(title_mode == "title"))
             if mode == "existing" and existing_mode == "insert":
                 el = sld_list[-1]
                 sld_list.remove(el)

@@ -533,15 +533,18 @@ def extract_images(path: str, out_dir: str, min_px: int = 32) -> dict:
             if outputs else "This PDF contains no embedded images (drawings are usually vector)."}
 
 
-def office_to_pdf(paths: list[str], out_dir: str) -> dict:
+def office_to_pdf(paths: list[str], out_dir: str, *, reference: bool = False) -> dict:
     """Word/Excel/PowerPoint/OpenDocument → PDF with a local LibreOffice (offline)."""
     soffice = find_office()
     if not soffice:
         raise ToolError("Converting Office documents needs LibreOffice (free) installed on this computer.")
     folder = Path(out_dir)
-    folder.mkdir(parents=True, exist_ok=True)
+    if not reference:
+        folder.mkdir(parents=True, exist_ok=True)
     outputs = []
-    with tempfile.TemporaryDirectory(prefix="eng-office-") as tmp:
+    # The macOS Unix socket path (including LibreOffice's suffix) must fit in 104 bytes.
+    with tempfile.TemporaryDirectory(prefix="eng-office-", dir="/private/tmp" if reference else None) as tmp:
+        tmp = str(Path(tmp).resolve())
         profile = Path(tmp, "profile").as_uri()
         for p in paths:
             work = Path(tmp, f"out-{len(outputs)}")
@@ -550,8 +553,12 @@ def office_to_pdf(paths: list[str], out_dir: str) -> dict:
                        "--headless", "--norestore", "--nodefault", "--nolockcheck",
                        "--convert-to", "pdf", "--outdir", str(work),
                        str(Path(p).expanduser().resolve())]
+            if reference:
+                from .standards import restricted_office_command
+
+                command = restricted_office_command(command, Path(tmp))
             try:
-                returncode = run_conversion(command, timeout=300)
+                returncode = run_conversion(command, timeout=60 if reference else 300)
             except subprocess.TimeoutExpired:
                 raise ToolError("LibreOffice conversion timed out; its contained processes were stopped.") from None
             except OSError as exc:

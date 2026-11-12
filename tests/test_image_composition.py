@@ -47,6 +47,20 @@ def test_repeated_transforms_resample_once_from_original_pixels():
     assert doc.active_layer.frame[:2] == pytest.approx((400, 300))
 
 
+def test_deleting_last_layer_round_trips_as_an_empty_project():
+    doc = ImageDocument.from_image(_two_tone(), "Base")
+    doc.remove_layer(0)
+    assert doc.active_layer is None and doc.composite().getbbox() is None
+    empty = ImageDocument.from_bytes(doc.to_bytes())
+    assert empty.layers == [] and empty.active_index == -1
+    empty.insert_layer(ImageLayer("New layer", _two_tone()))
+    assert empty.active_index == 0 and empty.active_layer.name == "New layer"
+    doc.undo()
+    assert doc.active_layer is not None
+    doc.redo()
+    assert doc.active_layer is None
+
+
 def test_transform_keeps_mask_aligned_and_undo_restores():
     doc = ImageDocument(400, 400)
     mask = Image.new("L", (100, 100), 255)

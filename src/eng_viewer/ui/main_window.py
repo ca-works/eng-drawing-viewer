@@ -217,6 +217,8 @@ class MainWindow(QMainWindow):
         self._save_bridge = _SaveBridge(self)
         self._save_bridge.saved.connect(self._on_png_saved)
         self._mark_windows: dict[tuple, QWidget] = {}
+        self._session_markup = {}
+        self._standards = None
         self._copy_job: FullPageRender | None = None
         self._unified = False
         self._mode = "viewer"
@@ -237,7 +239,12 @@ class MainWindow(QMainWindow):
 
     # ================================================================== UI
     def _build_ui(self):
-        self.view = PageView(self.render)
+        if IS_MAC:
+            from .mark.overlay import MarkOverlayView
+
+            self.view = MarkOverlayView(self.render, self)
+        else:
+            self.view = PageView(self.render)
         self.view.thin_lines = bool(self.settings.get("enhance_thin_lines"))
         self.view.setAcceptDrops(False)  # file drops are handled by the window
         central = QWidget()
@@ -420,6 +427,11 @@ class MainWindow(QMainWindow):
         self.btn_mark.setToolTip(tip("Mark up this page (the original is never modified)", self._mark_shortcut()))
         self.btn_mark.clicked.connect(self.open_mark)
         vl.addWidget(self.btn_mark)
+        if IS_MAC:
+            self.btn_annotations = tool_button("eye", "Show Annotations", checkable=True)
+            self.btn_annotations.toggled.connect(self._show_annotations)
+            vl.addWidget(self.btn_annotations)
+            vl.addWidget(self.standards_button(self))
         vl.addSpacing(4)
         self.btn_inspector = tool_button("sidebar-right", tip("Show Inspector", KEYS["inspector"]), checkable=True)
         self.btn_inspector.setChecked(True)
@@ -729,6 +741,8 @@ class MainWindow(QMainWindow):
             if not w.close():
                 event.ignore()
                 return
+        if self._standards is not None:
+            self._standards.shutdown()
         self.save_state()
         self.thumbs.cancel_prefetch()
         self.view.release()
@@ -1263,8 +1277,51 @@ class MainWindow(QMainWindow):
         win = MarkWindow(self, self.render, self.settings, ref, self._quality_dpi(), self.thumbs,
                          is_image=self._is_image(self.doc_path))
         self._mark_windows[key] = win
-        win.destroyed.connect(lambda *_a, k=key: self._mark_windows.pop(k, None))
+        if IS_MAC:
+            items = self._session_markup.pop(ref.key, [])
+            win.canvas.attach_items(items)
+            win.canvas.undo_stack.indexChanged.connect(self._refresh_annotations)
+        else:
+            win.destroyed.connect(lambda *_a, k=key: self._mark_windows.pop(k, None))
         win.show()
+
+    def mark_items(self, ref):
+        window = self._mark_windows.get((ref.path, ref.page))
+        if window is not None and window.ref.key == ref.key:
+            return list(reversed(window.canvas.annotations()))
+        return self._session_markup.get(ref.key, ())
+
+    def retain_markup(self, window):
+        canvas = window.canvas
+        canvas._finish_text_edit()
+        items = list(reversed(canvas.annotations()))
+        canvas.detach_items(items)
+        if items:
+            self._session_markup[window.ref.key] = items
+        self._mark_windows.pop((window.ref.path, window.ref.page), None)
+        self._refresh_annotations()
+        if self._standards is not None:
+            self._standards.release_host(window)
+
+    def _refresh_annotations(self, *_):
+        if self.view.show_annotations:
+            self.view.viewport().update()
+
+    def _show_annotations(self, enabled):
+        self.view.show_annotations = enabled
+        self.view.viewport().update()
+
+    def standards_button(self, host):
+        button = tool_button("book", "Standards Reference", text="Standards" if host is self else None)
+        button.clicked.connect(lambda: self._toggle_standards(host))
+        return button
+
+    def _toggle_standards(self, host):
+        if self._standards is None:
+            from .standards import StandardsDock
+
+            self._standards = StandardsDock(self)
+        self._standards.toggle_at(host)
 
     # ============================================================ settings
     def set_theme(self, mode: str):

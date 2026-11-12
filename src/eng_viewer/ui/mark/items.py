@@ -116,6 +116,77 @@ def _pen(color: QColor, width: float, cap=Qt.PenCapStyle.RoundCap) -> QPen:
     return pen
 
 
+SYMBOL_TOOLS = ("checkmark", "cross")
+
+
+def symbol_path(kind: str, width: float, height: float) -> QPainterPath:
+    x, y = width / 2, height / 2
+    if kind == "checkmark":
+        path = QPainterPath(QPointF(-x, y * 0.15))
+        path.lineTo(-x * 0.3, y)
+        path.lineTo(x, -y)
+    else:
+        path = QPainterPath(QPointF(-x, -y))
+        path.lineTo(x, y)
+        path.moveTo(x, -y)
+        path.lineTo(-x, y)
+    return path
+
+
+class SymbolItem(AnnotationMixin, QGraphicsItem):
+    def __init__(self, kind: str, color: QColor, size: float, width: float, height: float | None = None):
+        super().__init__()
+        self._init_annotation()
+        self.kind, self.color, self.size, self.width = kind, QColor(color), size, width
+        self.height = size if height is None else height
+        self.setZValue(Z_SHAPES)
+
+    def geom_rect(self) -> QRectF:
+        return QRectF(self.pos() - QPointF(self.size / 2, self.height / 2),
+                      self.pos() + QPointF(self.size / 2, self.height / 2))
+
+    def boundingRect(self) -> QRectF:
+        pad = max(6.0, self.width) / 2 + 1
+        return QRectF(-self.size / 2 - pad, -self.height / 2 - pad,
+                      self.size + 2 * pad, self.height + 2 * pad)
+
+    def shape(self) -> QPainterPath:
+        stroker = QPainterPathStroker(_pen(self.color, max(6.0, self.width)))
+        return stroker.createStroke(symbol_path(self.kind, self.size, self.height))
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(_pen(self.color, self.width))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(symbol_path(self.kind, self.size, self.height))
+        self.paint_chrome(painter, self.boundingRect())
+
+    def style(self) -> dict:
+        return {"color": QColor(self.color), "size": self.size, "width": self.width}
+
+    def set_style(self, style: dict):
+        self.prepareGeometryChange()
+        size = style.get("size", self.size)
+        self.height *= size / self.size
+        self.size = size
+        self.width = style.get("width", self.width)
+        self.color = QColor(style.get("color", self.color))
+        self.update()
+
+    def get_state(self) -> dict:
+        return {**super().get_state(), "size": self.size, "height": self.height}
+
+    def _apply_state(self, state: dict):
+        self.size, self.height = state["size"], state["height"]
+
+    def scaled_state(self, state: dict, old: QRectF, new: QRectF) -> dict:
+        sx, sy = _scales(old, new)
+        return {"pos": map_point(state["pos"], old, new), "size": state["size"] * sx, "height": state["height"] * sy}
+
+    def _extra_dict(self) -> dict:
+        return {"color": _col(self.color), "size": self.size, "width": self.width, "height": self.height}
+
+
 class StrokeItem(AnnotationMixin, QGraphicsItem):
     """Freehand pen or highlighter stroke."""
 
@@ -495,10 +566,11 @@ class GhostItem(QGraphicsItem):
         self._num_path = QPainterPath()
 
     def configure(self, tool: str, color: QColor, size: float, alpha: float = 1.0, number: int = 1,
-                  fill: bool = False, screen_px: float = 0.0):
+                  fill: bool = False, screen_px: float = 0.0, width: float = 2.0):
         self.prepareGeometryChange()
         self.tool, self.color, self.size, self.alpha = tool, QColor(color), float(size), alpha
         self.number, self.fill, self.screen_px = number, fill, screen_px
+        self.width = width
         if tool == "bubble":
             self._num_path = number_path(number, size, self.font_family)
         self.update()
@@ -530,6 +602,10 @@ class GhostItem(QGraphicsItem):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#000000"))
             painter.drawPath(self._num_path)
+        elif t in SYMBOL_TOOLS:
+            painter.setOpacity(0.55)
+            painter.setPen(_pen(self.color, self.width))
+            painter.drawPath(symbol_path(t, self.size, self.size))
         elif t in ("pen", "highlighter"):
             c = QColor(self.color)
             c.setAlphaF(0.35 if t == "pen" else min(0.5, self.alpha))
@@ -706,6 +782,8 @@ def item_from_dict(d: dict, font_family: str = ""):
         it = StrokeItem(QColor(d["color"]), d["width"], bool(d.get("highlighter")), d.get("alpha", 1.0))
         it.points = [_unpt(p) for p in d["points"]]
         it._rebuild()
+    elif t in SYMBOL_TOOLS:
+        it = SymbolItem(t, QColor(d["color"]), d["size"], d["width"], d.get("height"))
     elif t == "arrow":
         it = ArrowItem(_unpt(d["p1"]), _unpt(d["p2"]), QColor(d["color"]), d["width"])
     elif t == "circle":

@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QPointF, QSize, QSizeF, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QImage, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QSplitter, QToolButton,
+    QApplication, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QSplitter, QToolButton,
     QVBoxLayout, QWidget,
 )
 
@@ -25,12 +25,12 @@ from ..widgets import (
 )
 from .canvas import TOOL_NAMES, TOOLS, MarkCanvas
 from .comments import CommentsPanel
-from .items import ArrowItem, BubbleItem, EllipseItem, StrokeItem, TextItem
+from .items import SYMBOL_TOOLS, ArrowItem, BubbleItem, EllipseItem, StrokeItem, SymbolItem, TextItem
 from .tool_options import RANGES, ColorSwatches, PreviewPopover, PreviewSlider, ToolSettings, format_size
 
-TOOL_KEYS = {"select": "V", "pen": "P", "highlighter": "H", "text": "T", "arrow": "A", "circle": "O", "bubble": "B", "eraser": "E"}
+TOOL_KEYS = {"select": "V", "pen": "P", "highlighter": "H", "text": "T", "arrow": "A", "circle": "O", "checkmark": "K", "cross": "X", "bubble": "B", "eraser": "E"}
 TOOL_ICONS = {"select": "select", "pen": "pen", "highlighter": "highlighter", "text": "text", "arrow": "arrow",
-              "circle": "circle", "bubble": "bubble", "eraser": "eraser"}
+              "circle": "circle", "checkmark": "check", "cross": "x", "bubble": "bubble", "eraser": "eraser"}
 MARK_EXPORT_MIN_DPI = 300  # the original MARK always exported at 300 DPI or more
 
 _SPELLER = None
@@ -62,6 +62,8 @@ def get_speller(settings):
 
 
 def _item_tool(item) -> str:
+    if isinstance(item, SymbolItem):
+        return item.kind
     if isinstance(item, StrokeItem):
         return "highlighter" if item.highlighter else "pen"
     return {ArrowItem: "arrow", EllipseItem: "circle", TextItem: "text", BubbleItem: "bubble"}.get(type(item), "pen")
@@ -215,6 +217,8 @@ class MarkWindow(QMainWindow):
         self.btn_pdf = tool_button("save", tip("Save Marked Page as PDF", "Ctrl+S"), text="PDF")
         self.btn_pdf.clicked.connect(self.save_pdf)
         lay.addWidget(self.btn_pdf)
+        if IS_MAC and hasattr(self.owner, "standards_button"):
+            lay.addWidget(self.owner.standards_button(self))
         lay.addSpacing(4)
         self.btn_copy = primary_button("Copy Marked Page", "copy-image")
         self.btn_copy.setToolTip(tip("Copy the marked page as a high-resolution image", QKeySequence.StandardKey.Copy))
@@ -258,6 +262,16 @@ class MarkWindow(QMainWindow):
         self.size_value.setMinimumWidth(52)
         sl.addWidget(self.size_value)
         lay.addWidget(self.size_box)
+        self.symbol_width = QDoubleSpinBox()
+        self.symbol_width.setRange(0.25, 24)
+        self.symbol_width.setSingleStep(0.25)
+        self.symbol_width.setPrefix("Stroke ")
+        self.symbol_width.setSuffix(" pt")
+        self.symbol_width.setToolTip("Symbol stroke thickness")
+        self.symbol_width.setAccessibleName("Symbol stroke thickness")
+        self.symbol_width.setKeyboardTracking(False)
+        self.symbol_width.valueChanged.connect(self._symbol_width_changed)
+        lay.addWidget(self.symbol_width)
         self.alpha_box = QWidget()
         al = QHBoxLayout(self.alpha_box)
         al.setContentsMargins(0, 0, 0, 0)
@@ -392,7 +406,7 @@ class MarkWindow(QMainWindow):
         st = dict(self.ts.get(tool))
         if canvas_tool == "select" and sel:
             st.update(self._style_as_settings(sel[0]))
-        has_color = tool in ("pen", "highlighter", "text", "arrow", "circle")
+        has_color = "color" in st
         self.color_box.setVisible(has_color)
         if has_color:
             self.swatches.set_current(st.get("color"))
@@ -403,6 +417,11 @@ class MarkWindow(QMainWindow):
             self.size_label.setText(text)
             self.size_slider.set_range(lo, hi, st["size"])
             self.size_value.setText(format_size(st["size"], unit))
+        self.symbol_width.setVisible(tool in SYMBOL_TOOLS)
+        if tool in SYMBOL_TOOLS:
+            self.symbol_width.blockSignals(True)
+            self.symbol_width.setValue(st["width"])
+            self.symbol_width.blockSignals(False)
         self.alpha_box.setVisible(tool == "highlighter")
         if tool == "highlighter":
             self.alpha_slider.set_value(st.get("alpha", 0.35))
@@ -425,7 +444,7 @@ class MarkWindow(QMainWindow):
         if "color" in s:
             out["color"] = s["color"].name()
         if "width" in s:
-            out["size"] = s["width"]
+            out["width" if isinstance(item, SymbolItem) else "size"] = s["width"]
         if "size" in s:
             out["size"] = s["size"]
         if "alpha" in s:
@@ -457,6 +476,15 @@ class MarkWindow(QMainWindow):
         tool = self._options_tool()
         if not self._selection_edit({"color": color}, "Change Colour", live=False):
             self.ts.set(tool, "color", color.name())
+            self._persist_tools()
+            self.canvas.refresh_ghost()
+
+    def _symbol_width_changed(self, width: float):
+        tool = self._options_tool()
+        if tool not in SYMBOL_TOOLS:
+            return
+        if not self._selection_edit({"width": width}, "Change Symbol Thickness", live=False):
+            self.ts.set(tool, "width", width)
             self._persist_tools()
             self.canvas.refresh_ghost()
 
@@ -721,7 +749,8 @@ class MarkWindow(QMainWindow):
             # the app quitting): everything below has already been done.
             super().closeEvent(event)
             return
-        if self.canvas.has_markup() and not self.canvas.undo_stack.isClean():
+        retain = IS_MAC and hasattr(self.owner, "retain_markup")
+        if not retain and self.canvas.has_markup() and not self.canvas.undo_stack.isClean():
             box = QMessageBox(QMessageBox.Icon.Warning, "Discard this markup?",
                               "Your markup has not been copied, saved or sent to the PowerPoint queue. "
                               "MARK annotations are temporary and are never written into the PDF.",
@@ -732,6 +761,8 @@ class MarkWindow(QMainWindow):
             if box.clickedButton() is not discard:
                 event.ignore()
                 return
+        if retain:
+            self.owner.retain_markup(self)
         self.settings.set("mark_geometry", bytes(self.saveGeometry().toBase64()).decode())
         self._persist_tools()
         self.settings.save()

@@ -26,6 +26,9 @@ ICONS: dict[str, str] = {
     # Window / navigation
     "sidebar-left": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/><path d="M5.5 8h1.2M5.5 11h1.2"/>',
     "sidebar-right": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M15 4.5v15"/><path d="M17.3 8h1.2M17.3 11h1.2"/>',
+    "book": '<path d="M6 3.5h13v17H6a2 2 0 0 1 0-4h13M4 18.5v-13a2 2 0 0 1 2-2M8 7.5h7M8 11h5"/>',
+    "eye": '<path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/>',
+    "detach": '<path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5M13 4h7v7m0-7-8 8"/>',
     "folder-open": '<path d="M4 18.5V6.8a2 2 0 0 1 2-2h3.4l2 2.1H17a2 2 0 0 1 2 2V10"/><path d="M4 18.5l2.4-6.6a1.6 1.6 0 0 1 1.5-1.1h12.3a.9.9 0 0 1 .85 1.2L19 17.3a1.8 1.8 0 0 1-1.7 1.2z"/>',
     "folder": '<path d="M3.5 7.2a2 2 0 0 1 2-2h3.7l2 2.1h7.3a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
     "file": '<path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M13.5 3v5.5H19"/>',

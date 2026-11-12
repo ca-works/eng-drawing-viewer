@@ -136,11 +136,23 @@ class ImageCanvas(QGraphicsView):
         self.viewport().update()
 
     def clear_image(self):
-        self.end_preview()
         self.item.setPixmap(QPixmap())
         self._image_size = (0, 0)
+        self.scene_.setSceneRect(QRectF())
+        self.resetTransform()
+        self.reset_gesture()
+        self.set_selection(None)
+        self.guides.clear()
         self.layer_frame = None
         self.viewport().update()
+
+    def reset_gesture(self):
+        self.end_preview()
+        self.crop_rect = self._crop_handle = self._guide_drag = None
+        self._down = self._space = False
+        self._pan = None
+        self._points.clear()
+        self._polygon.clear()
 
     def set_layer_frame(self, frame, editable=True):
         self.layer_frame = frame
@@ -530,9 +542,12 @@ class ImageCanvas(QGraphicsView):
 
     def drawBackground(self, painter, rect):
         painter.fillRect(rect, QColor("#272c35"))
-        painter.fillRect(self.sceneRect(), self._checker)
+        if self._image_size[0]:
+            painter.fillRect(QRectF(0, 0, *self._image_size), self._checker)
 
     def drawForeground(self, painter, rect):
+        if not self._image_size[0]:
+            return
         zoom = max(self.transform().m11(), .01)
         pen = QPen(QColor("#62b8ff"), 0)
         painter.setPen(pen)
