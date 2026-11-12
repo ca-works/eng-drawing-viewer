@@ -32,10 +32,12 @@ TOOLS = {'tools/export_public_source.py', 'tools/collect_licenses.py', 'tools/bu
          # Bundled into every app (the frozen self-test), so part of the corresponding source.
          'tools/editor_smoke.py',
          # Build inputs of the Linux and macOS Universal editions and the release manifest.
-         'tools/fuse_macos.py', 'tools/build_opencv_minimal.sh', 'tools/release_manifest.py'}
+         'tools/fuse_macos.py', 'tools/build_opencv_minimal.sh', 'tools/release_manifest.py',
+         # Windows and Linux 2.3.0: the minimal OpenCV on Windows and the Linux archive build.
+         'tools/build_opencv_minimal_windows.py', 'tools/build_from_archive_linux.sh'}
 # Build files whose names have no extension, or extensions only the packaging folder uses.
 PACKAGING_NAMES = {'packaging/linux/AppRun'}
-PACKAGING_SUFFIXES = {'.desktop', '.xml', '.patch', '.asc'}
+PACKAGING_SUFFIXES = {'.desktop', '.xml', '.patch', '.asc', '.h'}
 DENIED = {'audit', 'reference', '.git', '.github', 'build', 'dist', 'release', '.venv', '__pycache__'}
 BINARY_SUFFIXES = {'.exe', '.dll', '.dylib', '.so', '.pyc', '.zip', '.dmg', '.pdf'}
 # Patterns are assembled so this scanner can itself be exported without exemptions.

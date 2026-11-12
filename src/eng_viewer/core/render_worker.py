@@ -84,7 +84,8 @@ def _page_info(state: _State, args: dict) -> tuple[dict, None]:
     doc = state.doc(args["path"])
     limit = int(args.get("size_limit", 400))
     sizes = []
-    for i in range(min(doc.page_count, limit)):
+    first = int(args.get("first_page", 0))
+    for i in range(first, min(doc.page_count, first + limit)):
         r = doc.load_page(i).rect
         sizes.append((float(r.width), float(r.height)))
     meta = doc.metadata or {}
@@ -131,13 +132,14 @@ def _render(state: _State, args: dict):
         min_line = float(args.get("min_line", 0.0))
     check_pixels(area_w * scale + 2, area_h * scale + 2)
     matrix = pymupdf.Matrix(scale, scale)
+    image_alpha = bool(args.get("preserve_image_alpha") and not doc.is_pdf and not clip)
     try:
         pymupdf.TOOLS.set_graphics_min_line_width(min_line)
         if clip:
             dl = state.display_list(path, index)
             pix = dl.get_pixmap(matrix=matrix, clip=pymupdf.Rect(*clip), alpha=False)
         else:
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            pix = page.get_pixmap(matrix=matrix, alpha=image_alpha)
     finally:
         pymupdf.TOOLS.set_graphics_min_line_width(0.0)
 
@@ -175,6 +177,9 @@ def _render(state: _State, args: dict):
             pass
     if args.get("no_return"):
         return header, None
+    if image_alpha:
+        header["format"] = "rgba_premultiplied"
+        return header, pix
     if args.get("bgrx"):
         header["format"] = "bgrx"
         header["stride"] = pix.width * 4
@@ -222,8 +227,25 @@ def _pdf_edit(_state: _State, args: dict):
     return pdf_edit.run(args), None
 
 
+def _iwork(_state: _State, args: dict):
+    if sys.platform != "darwin":
+        raise ValueError("iWork integration is available on macOS.")
+    from ..platform import macos_iwork
+
+    op = args["op"]
+    if op == "preview":
+        return macos_iwork.preview(args["source"], args["out_dir"]), None
+    if op == "keynote_target":
+        return macos_iwork.keynote_target(), None
+    if op == "keynote_insert":
+        return macos_iwork.keynote_insert(args["target"], args["slides"]), None
+    if op == "handoff":
+        return macos_iwork.file_handoff(args["app"], args["spec"]), None
+    raise ValueError("Unknown iWork operation.")
+
+
 HANDLERS = {"info": _page_info, "render": _render, "pptx": _pptx, "tool": _tool,
-            "pdf_edit": _pdf_edit}
+            "pdf_edit": _pdf_edit, "iwork": _iwork}
 
 
 def worker_main(conn) -> None:

@@ -17,7 +17,7 @@ This page is the overview; the generated files are authoritative for a given bui
 | Qt (qtbase, qtsvg, qtimageformats, qtwayland on Linux) | 6.12.0 | LGPL-3.0-only | full texts in `licenses/curated/Qt/` |
 | PyMuPDF / MuPDF | 1.28.2 | AGPL-3.0-or-later (or Artifex commercial) | the reason the app is AGPL; `licenses/curated/MuPDF/` |
 | NumPy | 2.5.4 | BSD-3-Clause and others (OpenBLAS/Accelerate notes in its LICENSE) | macOS 14 wheels use Apple Accelerate |
-| OpenCV (opencv-python-headless) | 5.0.0.93 | Apache-2.0; its wheels' third-party libraries in LICENSE-3RD-PARTY.txt | Universal edition: built from source, core/imgproc/photo only |
+| OpenCV (opencv-python-headless) | 5.0.0.93 | Apache-2.0 (the minimal build statically includes only OpenCV's own zlib copy, zlib licence) | every edition: built from the source release, core/imgproc/photo only; no FFmpeg, OpenSSL, OpenBLAS or codecs |
 | ONNX / ONNX Runtime | 1.23.2 | Apache-2.0 / MIT | runtime only; no model weights bundled |
 | Pillow | 13.0.0 | MIT-CMU | plus its wheels' codec libraries (libjpeg-turbo, libpng, libtiff, libwebp, …) |
 | pillow-heif (libheif, libde265, x265) | 1.8.1 (libheif 1.23.6) | BSD-3-Clause; libheif LGPL-3.0; libde265 LGPL-3.0; x265 GPL-2.0-or-later | exact texts in `packaging/licenses/` with sources and hashes (`SOURCES.json`) |
@@ -55,9 +55,13 @@ This page is the overview; the generated files are authoritative for a given bui
 - **GPL-2.0-or-later (x265 in pillow-heif).** Its source is published with the release
   (`packaging/licenses/SOURCES.json` records the exact archive and hash); the app as a whole is
   AGPL-3.0-or-later, which is compatible.
-- **Apache-2.0 (OpenCV, ONNX, Tesseract data).** Licence and NOTICE texts ship unchanged. The
-  Universal edition's OpenCV is a modified build (fewer modules, one packaging patch); the patch is in
-  `packaging/opencv/` and the build script states what changed.
+- **Apache-2.0 (OpenCV, ONNX, Tesseract data).** Licence and NOTICE texts ship unchanged. Every
+  edition's OpenCV is a modified build (fewer modules, one packaging patch, on Linux a forced symbol
+  version header); the patch and header are in `packaging/opencv/` and the build scripts state what
+  changed. The OpenCV source release is published with the other upstream sources.
+- **OpenSSL 3.x inside CPython** (python-build-standalone links it statically for `hashlib`; the
+  `ssl` module is not bundled). Apache-2.0, compatible with the AGPL-3.0. The OpenSSL 1.1.1k copy
+  that the published OpenCV wheel brought on Linux is gone.
 
 ## Not bundled
 

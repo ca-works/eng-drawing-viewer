@@ -60,9 +60,10 @@ edition. This page lists the places where a platform does something differently,
   under Rosetta 2 and on a real Intel runner. Under Rosetta the render worker processes may start
   as arm64 (macOS chooses the native half of a universal binary for new processes); the Intel
   runner covers a fully Intel run.
-- **OpenCV in the Universal edition** is built from source with only the modules the app uses (core,
-  imgproc, photo). The other editions use the published OpenCV wheels, which also contain video
-  I/O through FFmpeg (and OpenSSL); the app never uses those parts. Same functions, same results.
+- **OpenCV** is built from source in every 2.3.0 edition with only the modules the app uses (core,
+  imgproc, photo; OpenCV 5 adds flann and geometry as their dependencies): no video I/O, FFmpeg,
+  OpenSSL, OpenCL, image codecs or OpenBLAS. Same recipe and options on every platform
+  (`tools/build_opencv_minimal.sh`, `tools/build_opencv_minimal_windows.py`).
 - **Linux desktops.** The portal file dialog needs `xdg-desktop-portal` and a desktop backend
   (installed by GNOME, KDE and most others). Running the AppImage directly needs FUSE (`fusermount3`);
   without it use `--appimage-extract-and-run`. Physical trackpad gestures, screen readers and

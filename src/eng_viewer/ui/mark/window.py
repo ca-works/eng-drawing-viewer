@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QPointF, QSize, QSizeF, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QImage, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QSplitter, QToolButton,
+    QApplication, QCheckBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QSplitter, QToolButton,
     QVBoxLayout, QWidget,
 )
 
@@ -25,12 +25,12 @@ from ..widgets import (
 )
 from .canvas import TOOL_NAMES, TOOLS, MarkCanvas
 from .comments import CommentsPanel
-from .items import ArrowItem, BubbleItem, EllipseItem, StrokeItem, TextItem
+from .items import STAMP_TOOLS, SYMBOL_TOOLS, ArrowItem, BubbleItem, EllipseItem, StampItem, StrokeItem, SymbolItem, TextItem
 from .tool_options import RANGES, ColorSwatches, PreviewPopover, PreviewSlider, ToolSettings, format_size
 
-TOOL_KEYS = {"select": "V", "pen": "P", "highlighter": "H", "text": "T", "arrow": "A", "circle": "O", "bubble": "B", "eraser": "E"}
+TOOL_KEYS = {"select": "V", "pen": "P", "highlighter": "H", "text": "T", "arrow": "A", "circle": "O", "checkmark": "K", "cross": "X", "pass": None, "fail": None, "bubble": "B", "eraser": "E"}
 TOOL_ICONS = {"select": "select", "pen": "pen", "highlighter": "highlighter", "text": "text", "arrow": "arrow",
-              "circle": "circle", "bubble": "bubble", "eraser": "eraser"}
+              "circle": "circle", "checkmark": "check", "cross": "x", "pass": "stamp", "fail": "stamp", "bubble": "bubble", "eraser": "eraser"}
 MARK_EXPORT_MIN_DPI = 300  # the original MARK always exported at 300 DPI or more
 
 _SPELLER = None
@@ -62,6 +62,8 @@ def get_speller(settings):
 
 
 def _item_tool(item) -> str:
+    if isinstance(item, (SymbolItem, StampItem)):
+        return item.kind
     if isinstance(item, StrokeItem):
         return "highlighter" if item.highlighter else "pen"
     return {ArrowItem: "arrow", EllipseItem: "circle", TextItem: "text", BubbleItem: "bubble"}.get(type(item), "pen")
@@ -81,6 +83,7 @@ class MarkWindow(QMainWindow):
         name = Path(ref.path).name
         self.setWindowTitle(f"MARK — {name}" if is_image else f"MARK — {name} — page {ref.page + 1}")
         self.ts = ToolSettings(settings.get("mark"))
+        self.available_tools = TOOLS if IS_MAC else tuple(t for t in TOOLS if t not in STAMP_TOOLS)
         self.speller = get_speller(settings)
         self.popover = PreviewPopover()
         self._style_before = None
@@ -137,7 +140,7 @@ class MarkWindow(QMainWindow):
         windows_chrome.track(self)
 
         self.canvas.set_page(ref, owner.thumbs.get(ref.path, ref.page, 160, visible=False) if owner is not None else None)
-        self.canvas.set_tool(self.settings.get("mark_tool", "pen") if self.settings.get("mark_tool", "pen") in TOOLS else "pen")
+        self.canvas.set_tool(self.settings.get("mark_tool", "pen") if self.settings.get("mark_tool", "pen") in self.available_tools else "pen")
         QTimer.singleShot(0, self.canvas.fit_width)
         QTimer.singleShot(400, self._prefetch_base)
         self._update_actions()
@@ -173,8 +176,11 @@ class MarkWindow(QMainWindow):
         lay.addWidget(self.btn_redo)
         lay.addWidget(separator(True))
         self.tool_buttons: dict[str, QToolButton] = {}
-        for t in TOOLS:
-            b = tool_button(TOOL_ICONS[t], tip(TOOL_NAMES[t], TOOL_KEYS[t]), checkable=True, size=32, icon_size=19)
+        for t in self.available_tools:
+            stamp = t in STAMP_TOOLS
+            title = f"{TOOL_NAMES[t]} stamp" if stamp else tip(TOOL_NAMES[t], TOOL_KEYS[t])
+            b = tool_button(TOOL_ICONS[t], title, checkable=True, size=32, icon_size=16 if stamp else 19,
+                            text=TOOL_NAMES[t] if stamp else None)
             b.clicked.connect(lambda _=False, t=t: self.set_tool(t))
             self.tool_buttons[t] = b
             lay.addWidget(b)
@@ -215,6 +221,8 @@ class MarkWindow(QMainWindow):
         self.btn_pdf = tool_button("save", tip("Save Marked Page as PDF", "Ctrl+S"), text="PDF")
         self.btn_pdf.clicked.connect(self.save_pdf)
         lay.addWidget(self.btn_pdf)
+        if IS_MAC and hasattr(self.owner, "standards_button"):
+            lay.addWidget(self.owner.standards_button(self))
         lay.addSpacing(4)
         self.btn_copy = primary_button("Copy Marked Page", "copy-image")
         self.btn_copy.setToolTip(tip("Copy the marked page as a high-resolution image", QKeySequence.StandardKey.Copy))
@@ -258,12 +266,23 @@ class MarkWindow(QMainWindow):
         self.size_value.setMinimumWidth(52)
         sl.addWidget(self.size_value)
         lay.addWidget(self.size_box)
+        self.symbol_width = QDoubleSpinBox()
+        self.symbol_width.setRange(0.25, 24)
+        self.symbol_width.setSingleStep(0.25)
+        self.symbol_width.setPrefix("Stroke ")
+        self.symbol_width.setSuffix(" pt")
+        self.symbol_width.setToolTip("Symbol stroke thickness")
+        self.symbol_width.setAccessibleName("Symbol stroke thickness")
+        self.symbol_width.setKeyboardTracking(False)
+        self.symbol_width.valueChanged.connect(self._symbol_width_changed)
+        lay.addWidget(self.symbol_width)
         self.alpha_box = QWidget()
         al = QHBoxLayout(self.alpha_box)
         al.setContentsMargins(0, 0, 0, 0)
         al.setSpacing(8)
         al.addWidget(label("Opacity", "secondary"))
         self.alpha_slider = PreviewSlider(0.10, 0.80, 0.35, width=110, log=False)
+        self.alpha_slider.setAccessibleName("Opacity")
         self.alpha_slider.valueChanged.connect(self._alpha_changed)
         self.alpha_slider.pressed.connect(lambda: self._preview(True))
         self.alpha_slider.released.connect(lambda: self._preview(False))
@@ -272,6 +291,10 @@ class MarkWindow(QMainWindow):
         self.alpha_value.setMinimumWidth(36)
         al.addWidget(self.alpha_value)
         lay.addWidget(self.alpha_box)
+        self.stamp_date = QCheckBox("Date")
+        self.stamp_date.setToolTip("Show the original placement date beneath the stamp")
+        self.stamp_date.toggled.connect(self._stamp_date_toggled)
+        lay.addWidget(self.stamp_date)
         self.fill_btn = tool_button("fill", "Fill callout bubbles with white (hides drawing lines behind the number)", checkable=True, text="White fill", size=28, icon_size=16)
         self.fill_btn.toggled.connect(self._fill_toggled)
         lay.addWidget(self.fill_btn)
@@ -316,6 +339,11 @@ class MarkWindow(QMainWindow):
 
         f = mb.addMenu("&File")
         self.act_queue = act(f, "Send to PowerPoint Queue", self.send_to_queue, "Ctrl+D")
+        if IS_MAC and hasattr(self.owner, "export_iwork"):
+            from ..iwork_menu import send_menu
+
+            send_menu(f, self.send_to_iwork,
+                      suitable=lambda app: app != "Numbers" or self.owner.active_reference_table() is not None)
         self.act_save_pdf = act(f, "Save Marked Page as PDF…", self.save_pdf, "Ctrl+S")
         self.act_save = act(f, "Save Marked Page as PNG…", self.save_png, "Ctrl+Shift+S")
         f.addSeparator()
@@ -350,7 +378,7 @@ class MarkWindow(QMainWindow):
         t = mb.addMenu("&Tools")
         g = QActionGroup(self)
         self.tool_actions = {}
-        for tool in TOOLS:
+        for tool in self.available_tools:
             a = act(t, TOOL_NAMES[tool], lambda tool=tool: self.set_tool(tool), TOOL_KEYS[tool], checkable=True)
             g.addAction(a)
             self.tool_actions[tool] = a
@@ -392,7 +420,7 @@ class MarkWindow(QMainWindow):
         st = dict(self.ts.get(tool))
         if canvas_tool == "select" and sel:
             st.update(self._style_as_settings(sel[0]))
-        has_color = tool in ("pen", "highlighter", "text", "arrow", "circle")
+        has_color = "color" in st
         self.color_box.setVisible(has_color)
         if has_color:
             self.swatches.set_current(st.get("color"))
@@ -403,10 +431,21 @@ class MarkWindow(QMainWindow):
             self.size_label.setText(text)
             self.size_slider.set_range(lo, hi, st["size"])
             self.size_value.setText(format_size(st["size"], unit))
-        self.alpha_box.setVisible(tool == "highlighter")
-        if tool == "highlighter":
-            self.alpha_slider.set_value(st.get("alpha", 0.35))
-            self.alpha_value.setText(f"{st.get('alpha', 0.35) * 100:.0f}%")
+        self.symbol_width.setVisible(tool in SYMBOL_TOOLS)
+        if tool in SYMBOL_TOOLS:
+            self.symbol_width.blockSignals(True)
+            self.symbol_width.setValue(st["width"])
+            self.symbol_width.blockSignals(False)
+        stamp = tool in STAMP_TOOLS
+        self.alpha_box.setVisible(stamp or tool == "highlighter")
+        if stamp or tool == "highlighter":
+            lo, hi = (0.0, 1.0) if stamp else (0.10, 0.80)
+            self.alpha_slider.set_range(lo, hi, st["alpha"])
+            self.alpha_value.setText(f"{st['alpha']:.0%}")
+        self.stamp_date.setVisible(stamp)
+        self.stamp_date.blockSignals(True)
+        self.stamp_date.setChecked(st.get("show_date", False))
+        self.stamp_date.blockSignals(False)
         self.fill_btn.setVisible(tool == "bubble")
         self.fill_btn.blockSignals(True)
         self.fill_btn.setChecked(bool(st.get("fill")))
@@ -425,13 +464,15 @@ class MarkWindow(QMainWindow):
         if "color" in s:
             out["color"] = s["color"].name()
         if "width" in s:
-            out["size"] = s["width"]
+            out["width" if isinstance(item, SymbolItem) else "size"] = s["width"]
         if "size" in s:
             out["size"] = s["size"]
         if "alpha" in s:
             out["alpha"] = s["alpha"]
         if "fill" in s:
             out["fill"] = s["fill"]
+        if isinstance(item, StampItem):
+            out.update(show_date=s["show_date"], placed=item.placed, height=item.height)
         return out
 
     def _on_selection(self, _items):
@@ -460,6 +501,15 @@ class MarkWindow(QMainWindow):
             self._persist_tools()
             self.canvas.refresh_ghost()
 
+    def _symbol_width_changed(self, width: float):
+        tool = self._options_tool()
+        if tool not in SYMBOL_TOOLS:
+            return
+        if not self._selection_edit({"width": width}, "Change Symbol Thickness", live=False):
+            self.ts.set(tool, "width", width)
+            self._persist_tools()
+            self.canvas.refresh_ghost()
+
     def _size_key(self, item) -> str:
         return "width" if isinstance(item, (StrokeItem, ArrowItem, EllipseItem)) else "size"
 
@@ -480,12 +530,18 @@ class MarkWindow(QMainWindow):
 
     def _alpha_changed(self, v: float):
         self.alpha_value.setText(f"{v * 100:.0f}%")
-        if not self._selection_edit({"alpha": v}, "Change Opacity", live=True):
-            self.ts.set("highlighter", "alpha", v)
+        if not self._selection_edit({"alpha": v}, "Change Opacity", live=self._previewing):
+            self.ts.set(self._options_tool(), "alpha", v)
             self._persist_tools()
         self._show_popover()
         if self._previewing and self.canvas.tool != "select":
             self.canvas.show_size_preview(True)
+
+    def _stamp_date_toggled(self, on: bool):
+        if not self._selection_edit({"show_date": on}, "Toggle Stamp Date", live=False):
+            self.ts.set(self._options_tool(), "show_date", on)
+            self._persist_tools()
+            self.canvas.refresh_ghost()
 
     def _fill_toggled(self, on: bool):
         if not self._selection_edit({"fill": on}, "Change Fill", live=False):
@@ -641,6 +697,36 @@ class MarkWindow(QMainWindow):
 
         self._with_composite(done)
 
+    def send_to_iwork(self, app):
+        if app == "Numbers":
+            table = self.owner.active_reference_table()
+            if table is not None:
+                self.owner._standards.panel.send_table_to_numbers(table)
+            return
+        from ..queue_panel import QueueEntry
+
+        def done(image):
+            comments = self.canvas.comments_text()
+            entry = QueueEntry(self.ref.path, self.ref.page, marked_image=image, comments=comments)
+            self.owner.export_iwork(app, [entry], parent=self)
+
+        if not self.is_image:
+            self._with_composite(done)
+            return
+        ref = self.ref
+        job = FullPageRender(self.render, ref.path, ref.page, ref.width, ref.height, self.export_dpi,
+                             parent=self, native=True, preserve_image_alpha=True)
+
+        def ready(image):
+            self.canvas.render_annotations(image, ref.width, ref.height)
+            done(image)
+
+        job.finished.connect(ready)
+        job.failed.connect(lambda text: self.toast.show_message(text, "warning", "error", 4000))
+        job.finished.connect(job.deleteLater)
+        job.failed.connect(job.deleteLater)
+        job.start()
+
     def save_png(self):
         default = self._default_name(".png")
         path, _ = QFileDialog.getSaveFileName(self, "Save marked page as PNG", default, "PNG image (*.png)")
@@ -721,7 +807,8 @@ class MarkWindow(QMainWindow):
             # the app quitting): everything below has already been done.
             super().closeEvent(event)
             return
-        if self.canvas.has_markup() and not self.canvas.undo_stack.isClean():
+        retain = IS_MAC and hasattr(self.owner, "retain_markup")
+        if not retain and self.canvas.has_markup() and not self.canvas.undo_stack.isClean():
             box = QMessageBox(QMessageBox.Icon.Warning, "Discard this markup?",
                               "Your markup has not been copied, saved or sent to the PowerPoint queue. "
                               "MARK annotations are temporary and are never written into the PDF.",
@@ -732,6 +819,8 @@ class MarkWindow(QMainWindow):
             if box.clickedButton() is not discard:
                 event.ignore()
                 return
+        if retain:
+            self.owner.retain_markup(self)
         self.settings.set("mark_geometry", bytes(self.saveGeometry().toBase64()).decode())
         self._persist_tools()
         self.settings.save()

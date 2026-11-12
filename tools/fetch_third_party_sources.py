@@ -44,7 +44,8 @@ SOURCES = [
     ("pyinstaller-6.22.3.tar.gz", f"{PYPI}/p/pyinstaller/pyinstaller-6.22.3.tar.gz", "sha256",
      "05eb2f5615503e72939a7224d68b4aff572c6b0438ee4a17d0a4b481f399362d", "PyInstaller 6.22.3, including the bootloader"),
     # 2.3.0: the HEIF stack inside pillow-heif (all editions), the AppImage runtime (Linux) and the
-    # OpenCV source release the Mac editions are built from (Apache-2.0; with packaging/opencv/).
+    # OpenCV source release every edition's minimal OpenCV is built from (Apache-2.0; with
+    # packaging/opencv/, tools/build_opencv_minimal.sh and tools/build_opencv_minimal_windows.py).
     ("pillow_heif-1.8.1.tar.gz", f"{PYPI}/p/pillow_heif/pillow_heif-1.8.1.tar.gz", "sha256",
      "521ebffb8a181d56c3904e5a61f20903edee0d9d3275967b8fb345f866215c06", "pillow-heif 1.8.1 and its library build recipes"),
     ("libheif-1.23.6.tar.gz", "https://github.com/strukturag/libheif/releases/download/v1.23.6/libheif-1.23.6.tar.gz",
@@ -57,7 +58,7 @@ SOURCES = [
      "sha256", None, "AppImage type 2 runtime 20251108 (MIT; builds the statically linked libfuse 3, LGPL-2.1)"),
     ("opencv_python_headless-5.0.0.93.tar.gz", f"{PYPI}/o/opencv-python-headless/opencv_python_headless-5.0.0.93.tar.gz",
      "sha256", "b82f9831daab90b725c7c1ee1b36cb5732c367096ac76d119e64e14eb70d5f3c",
-     "OpenCV 5.0.0.93 source release (Apache-2.0) of the Mac editions' minimal build"),
+     "OpenCV 5.0.0.93 source release (Apache-2.0) of the minimal build in every edition"),
 ]
 
 
