@@ -19,6 +19,14 @@ class MarkOverlayView(PageView):
             self._paint_markup(painter, rect, ref)
         super().drawForeground(painter, rect)
 
+    def render_markup(self, image, ref):
+        painter = QPainter(image)
+        try:
+            painter.scale(image.width() / ref.width, image.height() / ref.height)
+            self._paint_markup(painter, QRectF(0, 0, ref.width, ref.height), ref)
+        finally:
+            painter.end()
+
     def _paint_markup(self, painter, exposed, ref):
         items = self.owner.mark_items(ref)
         if not items:

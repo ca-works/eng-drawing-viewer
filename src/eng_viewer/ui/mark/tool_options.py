@@ -9,7 +9,10 @@ from PySide6.QtGui import QColor, QConicalGradient, QFont, QFontMetrics, QPainte
 from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 from ..theme import ThemeManager, qc
-from .items import BUBBLE_RED, SYMBOL_TOOLS, BubbleItem, _pen, symbol_path, number_path
+from .items import (
+    BUBBLE_RED, MIN_STAMP_HEIGHT, MIN_STAMP_WIDTH, STAMP_HEIGHT_RATIO, STAMP_TOOLS, SYMBOL_TOOLS,
+    BubbleItem, _pen, number_path, paint_stamp, placement_date, stamp_bounds, symbol_path,
+)
 
 PRESET_COLORS = [
     ("Black", "#141414"), ("Red", "#E5202A"), ("Blue", "#1E5ADC"),
@@ -24,6 +27,8 @@ DEFAULTS = {
     "circle": {"color": "#E5202A", "size": 2.0},
     "checkmark": {"color": "#1E9646", "size": 24.0, "width": 2.5},
     "cross": {"color": "#E5202A", "size": 24.0, "width": 2.5},
+    "pass": {"color": "#19834B", "size": 90.0, "alpha": 1.0, "show_date": True},
+    "fail": {"color": "#C92B36", "size": 90.0, "alpha": 1.0, "show_date": True},
     "bubble": {"size": 30.0, "fill": False},
     "eraser": {"size": 14.0},
     "select": {},
@@ -38,6 +43,8 @@ RANGES = {
     "circle": (0.25, 24.0, "pt", "Thickness"),
     "checkmark": (4.0, 240.0, "pt", "Symbol size"),
     "cross": (4.0, 240.0, "pt", "Symbol size"),
+    "pass": (MIN_STAMP_WIDTH, 500.0, "pt", "Stamp width"),
+    "fail": (MIN_STAMP_WIDTH, 500.0, "pt", "Stamp width"),
     "bubble": (8.0, 600.0, "pt", "Bubble size"),
     "eraser": (4.0, 80.0, "px", "Eraser size"),
 }
@@ -96,6 +103,9 @@ def sample_extent(tool: str, st: dict, ppp: float, number: int = 1) -> QSizeF:
         f.setPixelSize(max(1, round(size * ppp)))
         fm = QFontMetrics(f)
         return QSizeF(fm.horizontalAdvance("Aa Text 12") + 8, fm.height() + 4)
+    if tool in STAMP_TOOLS:
+        bounds = stamp_bounds(size, st.get("height", max(MIN_STAMP_HEIGHT, size * STAMP_HEIGHT_RATIO)), st["show_date"])
+        return QSizeF(bounds.width() * ppp + 8, bounds.height() * ppp + 8)
     if tool in SYMBOL_TOOLS:
         extent = (size + st["width"]) * ppp + 8
         return QSizeF(extent, extent)
@@ -171,6 +181,12 @@ def paint_sample(p: QPainter, rect: QRectF, tool: str, st: dict, ppp: float, num
         p.setFont(f)
         p.setPen(color)
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Aa Text 12")
+    elif tool in STAMP_TOOLS:
+        height = st.get("height", max(MIN_STAMP_HEIGHT, size * STAMP_HEIGHT_RATIO))
+        bounds = stamp_bounds(size, height, st["show_date"])
+        p.translate(c - bounds.center() * ppp)
+        paint_stamp(p, tool, size * ppp, height * ppp, color, st["alpha"],
+                    st.get("placed", placement_date()) if st["show_date"] else "")
     elif tool in SYMBOL_TOOLS:
         p.translate(c)
         p.setPen(_pen(color, st["width"] * ppp))
@@ -332,7 +348,7 @@ class PreviewSlider(QWidget):
         if self.log:
             v = self.lo * (self.hi / self.lo) ** f
         else:
-            v = self.lo + (self.hi - self.lo) * f
+            return round(self.lo + (self.hi - self.lo) * f, 2)
         # Friendly rounding: quarter points when small, whole points when large.
         if v < 3:
             return round(v * 4) / 4

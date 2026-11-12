@@ -21,6 +21,7 @@ from ..core.naturalsort import sort_paths
 from ..core.render_service import PRI_INTERACTIVE, PRI_PREFETCH, RenderResult, RenderService
 from ..core.documents import IMAGE_EXTS, is_document_name, kind_for
 from ..core.scanning import scan_folder
+from ..core.standards import IWORK_EXTS, OPEN_EXTS
 from ..core.tool_support import OFFICE_EXTS
 from ..platform import reveal_in_file_manager, reveal_label
 from . import icons
@@ -316,6 +317,8 @@ class MainWindow(QMainWindow):
         self.queue.addSelectedRequested.connect(self.add_selected_to_queue)
         self.queue.addAllRequested.connect(self.add_all_to_queue)
         self.queue.exportRequested.connect(self.export_queue)
+        if IS_MAC:
+            self.queue.sendRequested.connect(lambda app: self.export_iwork(app, self.queue.model.entries))
         self.queue.showEntryRequested.connect(lambda e: self.open_document(e.doc_path, e.page_index))
         self.queue.filesDropped.connect(self._add_paths_to_queue)
         self.queue.exportPdfRequested.connect(self.export_queue_pdf)
@@ -521,6 +524,10 @@ class MainWindow(QMainWindow):
         self.act_save_png = self._act(f, "Save Page as PNG…", self.save_page_png, "Ctrl+Shift+S", "save")
         self.act_export = self._act(f, "Export Queue to PowerPoint…", self.export_queue, "Ctrl+E", "presentation")
         self._act(f, "Export Queue as PDF…", self.export_queue_pdf, "Ctrl+Shift+E", "save")
+        if IS_MAC:
+            from .iwork_menu import send_menu
+
+            send_menu(f, self.send_current_to_iwork, suitable=self.can_send_current)
         f.addSeparator()
         self._act(f, "Close Window", self.close, QKeySequence.StandardKey.Close)
         prefs = self._act(f, "Settings…", self.show_preferences, KEYS["settings"], "settings")
@@ -757,14 +764,15 @@ class MainWindow(QMainWindow):
 
     def open_files_dialog(self):
         start = str(self.source_root) if self.source_root else str(Path.home())
-        pats = " ".join(f"*{e}" for e in sorted({".pdf"} | IMAGE_EXTS))
-        files, _ = QFileDialog.getOpenFileNames(self, "Open drawings and images", start, f"Documents ({pats} *.avif *.engimg *.svg *.dxf *.engvec)")
+        pats = " ".join(f"*{e}" for e in sorted({".pdf"} | IMAGE_EXTS | IWORK_EXTS | OPEN_EXTS))
+        files, _ = QFileDialog.getOpenFileNames(self, "Open drawings and references", start, f"Documents ({pats} *.avif *.engimg *.svg *.dxf *.engvec)")
         if files:
             self.open_paths([Path(f) for f in files])
 
     def open_paths(self, paths: list[Path]):
         """Folders, PDFs or a mix (Finder open events, drag and drop, CLI)."""
         paths = [Path(p) for p in paths if Path(p).exists()]
+        paths = self._open_reference_paths(paths)
         vectors = [p for p in paths if p.suffix.lower() in (".svg", ".dxf", ".engvec")]
         projects = [p for p in paths if p.suffix.lower() in (".engimg", ".avif")]
         for p in vectors:
@@ -1260,6 +1268,55 @@ class MainWindow(QMainWindow):
         dlg = ExportDialog(self, self.render, self.settings, list(self.queue.model.entries))
         dlg.exec()
 
+    def active_reference_table(self):
+        dock = self._standards
+        if dock is not None and dock.isVisible() and dock.panel.stack.currentIndex() == 1:
+            doc = dock.panel.tabs.currentWidget()
+            if doc is not None and doc.source.suffix.casefold() in (".csv", ".tsv"):
+                return doc.source
+        return None
+
+    def can_send_current(self, app):
+        if app == "Numbers":
+            return self.active_reference_table() is not None
+        if self._mode == "image":
+            return self.image_editor is not None and self.image_editor.doc is not None and self.image_editor._job is None
+        return self._mode == "viewer" and self.view.page_ref is not None
+
+    def send_current_to_iwork(self, app):
+        if not self.can_send_current(app):
+            return
+        if app == "Numbers":
+            self._standards.panel.send_table_to_numbers(self.active_reference_table())
+            return
+        if self._mode == "image":
+            self.image_editor.send_to_iwork(app)
+            return
+        ref = self.view.page_ref
+        if self.view.show_annotations and self.mark_items(ref):
+            job = FullPageRender(self.render, ref.path, ref.page, ref.width, ref.height, self._quality_dpi(),
+                                 parent=self, native=self._is_image(ref.path), preserve_image_alpha=True)
+            self.toast.show_message("Preparing annotated page…", "mark", msec=30000)
+
+            def ready(image):
+                self.view.render_markup(image, ref)
+                self.export_iwork(app, [QueueEntry(ref.path, ref.page, marked_image=image)])
+
+            job.finished.connect(ready)
+            job.failed.connect(lambda text: self.toast.show_message(text, "warning", "error", 4000))
+            job.finished.connect(job.deleteLater)
+            job.failed.connect(job.deleteLater)
+            job.start()
+        else:
+            self.export_iwork(app, [QueueEntry(ref.path, ref.page)])
+
+    def export_iwork(self, app, entries, parent=None):
+        if not entries:
+            return
+        from .export_dialog import ExportDialog
+
+        ExportDialog(parent or self, self.render, self.settings, list(entries), destination=app).exec()
+
     # =============================================================== MARK
     def open_mark(self):
         if not self.doc_path or not self.page_count:
@@ -1316,12 +1373,27 @@ class MainWindow(QMainWindow):
         button.clicked.connect(lambda: self._toggle_standards(host))
         return button
 
-    def _toggle_standards(self, host):
+    def _standards_dock(self):
         if self._standards is None:
             from .standards import StandardsDock
 
             self._standards = StandardsDock(self)
-        self._standards.toggle_at(host)
+        return self._standards
+
+    def _toggle_standards(self, host):
+        self._standards_dock().toggle_at(host)
+
+    def _open_reference_paths(self, paths):
+        references = [path for path in paths if path.suffix.casefold() in IWORK_EXTS | OPEN_EXTS]
+        if references:
+            dock = self._standards_dock()
+            if dock.isFloating():
+                dock.show()
+                dock.raise_()
+            else:
+                dock._dock_at(self)
+            dock.panel.open_paths(references)
+        return [path for path in paths if path not in references]
 
     # ============================================================ settings
     def set_theme(self, mode: str):
@@ -1424,7 +1496,7 @@ class MainWindow(QMainWindow):
         for u in mime.urls() if mime.hasUrls() else []:
             if u.isLocalFile():
                 p = Path(u.toLocalFile())
-                if p.is_dir() or is_document_name(p.name) or p.suffix.lower() in OFFICE_EXTS | EDITOR_EXTS:
+                if p.is_dir() or is_document_name(p.name) or p.suffix.lower() in OFFICE_EXTS | EDITOR_EXTS | IWORK_EXTS | OPEN_EXTS:
                     out.append(p)
         return out
 
@@ -1445,6 +1517,9 @@ class MainWindow(QMainWindow):
 
     def route_dropped(self, paths: list[Path]):
         """Viewer: open PDFs, images and folders. Tools: feed the open tool. Office files: convert."""
+        paths = self._open_reference_paths(paths)
+        if not paths:
+            return
         docs = [str(p) for p in paths if p.is_file() and is_document_name(p.name)]
         office = [str(p) for p in paths if p.is_file() and p.suffix.lower() in OFFICE_EXTS]
         if self._mode in ("image", "vector"):

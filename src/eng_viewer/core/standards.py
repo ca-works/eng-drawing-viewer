@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from threading import Event
 
 from .naturalsort import natural_key
 
 STANDARDS_EXTS = {".pdf", ".docx", ".xlsx", ".doc", ".xls"}
+IWORK_EXTS = frozenset({".pages", ".numbers", ".key"}) if sys.platform == "darwin" else frozenset()
+OPEN_EXTS = frozenset({".txt", ".csv", ".tsv", ".rtf", ".md"}) if sys.platform == "darwin" else frozenset()
+STANDARDS_EXTS.update(IWORK_EXTS | OPEN_EXTS)
 
 
 def scan_folder(root: Path, cancelled: Event) -> tuple[list[Path], int]:
@@ -23,10 +27,15 @@ def scan_folder(root: Path, cancelled: Event) -> tuple[list[Path], int]:
                     if cancelled.is_set():
                         return [], 0
                     try:
+                        path = Path(entry.path)
+                        ext = path.suffix.casefold()
                         if entry.is_dir(follow_symlinks=False):
-                            pending.append(Path(entry.path))
-                        elif Path(entry.name).suffix.casefold() in STANDARDS_EXTS and entry.is_file(follow_symlinks=False):
-                            files.append(Path(entry.path).relative_to(root))
+                            if ext in IWORK_EXTS:
+                                files.append(path.relative_to(root))
+                            else:
+                                pending.append(path)
+                        elif ext in STANDARDS_EXTS and entry.is_file(follow_symlinks=False):
+                            files.append(path.relative_to(root))
                     except OSError:
                         unreadable += 1
         except OSError:

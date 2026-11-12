@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.render_service import PRI_EXPORT, PRI_PREVIEW
-from ..core.standards import scan_folder
+from ..core.reference_text import TABLE_EXTS
+from ..core.standards import IWORK_EXTS, OPEN_EXTS, STANDARDS_EXTS, scan_folder
 from . import icons
 from .image_editor.common import Job
 from .mark.commands import AddItems, RemoveItems
@@ -165,6 +166,7 @@ class ReferenceDocument(QWidget):
         self.sizes = {}
         self.count = 0
         self.info_job = None
+        self.conversion_cancel = Event()
         self.style = ToolSettings()
         self.canvas = ReferenceCanvas(self.render, self.style)
 
@@ -184,6 +186,8 @@ class ReferenceDocument(QWidget):
         nav.addWidget(self.total)
         self.next = button(nav, "chevron-right", "Next page", lambda: self.go_to(self.page.value()))
         nav.addStretch(1)
+        if path.suffix.casefold() in TABLE_EXTS:
+            button(nav, "detach", "Send table to Numbers…", lambda: panel.send_table_to_numbers(path))
         self.zoom = QToolButton()
         self.zoom.setText("100%")
         self.zoom.setToolTip("Zoom and fit")
@@ -320,6 +324,7 @@ class ReferenceDocument(QWidget):
                 self._colour_icon(color.name())
 
     def release(self):
+        self.conversion_cancel.set()
         self.render.cancel_group(self.group)
         self.canvas.release()
 
@@ -334,6 +339,7 @@ class StandardsPanel(QWidget):
         self.pending = None
         self.scratch = None
         self.conversions = {}
+        self.preview_jobs = set()
         self.folder_nodes = {}
         self.checked = set()
         self.file_icons = {}
@@ -344,6 +350,7 @@ class StandardsPanel(QWidget):
         root.setSpacing(6)
         top = row(root)
         button(top, "folder-open", "Choose Standards folder…", self.choose_folder)
+        button(top, "file", "Open reference files…", self.choose_files)
         self.browse_button = button(top, "book", "Browse and add documents", self._toggle_browser)
         self.back = button(top, "chevron-left", "Previous document tab", lambda: self._step(-1))
         self.forward = button(top, "chevron-right", "Next document tab", lambda: self._step(1))
@@ -487,7 +494,7 @@ class StandardsPanel(QWidget):
             self.pending = None
             self.search.setEnabled(True)
             self.message.setText(f"{skipped} folder or file entries could not be read." if skipped else
-                                 "" if count else "No PDF, Word, or Excel documents in this folder.")
+                                 "" if count else "No supported reference documents in this folder.")
             self.message.setVisible(bool(self.message.text()))
 
     def _filter(self, query):
@@ -526,9 +533,29 @@ class StandardsPanel(QWidget):
     def open_selected(self):
         self.open_documents(sorted(self.checked, key=str.casefold))
 
+    def choose_files(self):
+        patterns = " ".join("*" + ext for ext in sorted(STANDARDS_EXTS))
+        paths, _ = QFileDialog.getOpenFileNames(self, "Open Standards References",
+                                               str(self.folder or Path.home()), f"Reference documents ({patterns})")
+        self.open_paths(Path(path) for path in paths)
+
     def open_documents(self, paths):
-        for relative in paths:
-            source = self.folder / relative
+        self.open_paths((self.folder / relative for relative in paths), root=self.folder)
+
+    def open_paths(self, paths, root=None):
+        for path in paths:
+            ext = path.suffix.casefold()
+            if ext not in STANDARDS_EXTS:
+                continue
+            source = path
+            available = True
+            try:
+                source = path.resolve(strict=True)
+                within_root = root is None or (source == path and source.is_relative_to(root))
+                compatible = source.is_file() or (ext in IWORK_EXTS and source.is_dir())
+                available = within_root and compatible and source.suffix.casefold() == ext
+            except (OSError, RuntimeError):
+                available = False
             for i in range(self.tabs.count()):
                 if self.tabs.widget(i).source == source:
                     self.tabs.setCurrentIndex(i)
@@ -536,25 +563,24 @@ class StandardsPanel(QWidget):
             else:
                 stamp = PageRef.stamp_for(source)
                 doc = ReferenceDocument(self, source, stamp)
-                idx = self.tabs.addTab(doc, self.file_icons.get(source.suffix.casefold(), icons.icon("file")), source.name)
+                if ext not in self.file_icons:
+                    self.file_icons[ext] = self.icon_provider.icon(QFileInfo(str(source)))
+                idx = self.tabs.addTab(doc, self.file_icons[ext], source.name)
                 self.tabs.setTabToolTip(idx, str(source))
                 self.tabs.setCurrentIndex(idx)
-                try:
-                    if not stamp or source.resolve(strict=True) != source or not source.is_file():
-                        raise OSError
-                except OSError:
-                    doc.message("This file is missing or unavailable. Close this tab and rescan the folder.")
-                    continue
-                if source.suffix.casefold() == ".pdf":
+                if not available or not stamp:
+                    doc.message("This file is missing or unavailable. Close this tab and choose the file again.")
+                elif ext == ".pdf":
                     doc.load(source)
                 else:
-                    self._open_office(doc)
+                    self._convert(doc, ext)
         if self.tabs.count():
             self.stack.setCurrentIndex(1)
         self._arrows()
 
-    def _open_office(self, doc):
+    def _convert(self, doc, ext):
         key = (doc.source, doc.stamp)
+        cacheable = not doc.source.is_dir()
         converted = self.conversions.get(key)
         if converted:
             doc.load(converted)
@@ -562,23 +588,55 @@ class StandardsPanel(QWidget):
         try:
             if self.scratch is None:
                 self.scratch = tempfile.TemporaryDirectory(prefix="eng-standards-")
-            out_dir = tempfile.mkdtemp(dir=self.scratch.name)
+            out_dir = Path(tempfile.mkdtemp(dir=self.scratch.name))
         except OSError as exc:
             doc.message(f"Could not create a temporary preview folder. {exc}")
             return
-        doc.message("Preparing a local Office preview…")
+
+        def ready(path, error):
+            if error:
+                doc.message(error)
+            else:
+                if cacheable:
+                    self.conversions[key] = path
+                doc.load(path)
+
+        if ext in OPEN_EXTS:
+            from .reference_formats import make_preview
+
+            doc.message("Preparing a local text preview…")
+            source, cancel = doc.source, doc.conversion_cancel
+            job = Job(lambda: make_preview(source, out_dir / "Reference.pdf", cancel))
+            self.preview_jobs.add(job)
+
+            def finish(result, error):
+                self.preview_jobs.discard(job)
+                if not cancel.is_set():
+                    ready(result, error)
+
+            job.signals.finished.connect(finish, Qt.ConnectionType.QueuedConnection)
+            QThreadPool.globalInstance().start(job)
+            return
+
+        if ext in IWORK_EXTS:
+            kind = "iwork"
+            args = {"op": "preview", "source": str(doc.source), "out_dir": str(out_dir)}
+            doc.message("Preparing a local iWork preview. macOS may ask for Automation access to export a temporary copy.")
+        else:
+            kind = "tool"
+            args = {"op": "office_to_pdf", "paths": [str(doc.source)], "out_dir": str(out_dir), "reference": True}
+            doc.message("Preparing a local Office preview…")
 
         def done(result):
-            if not result.ok:
-                doc.message(result.error)
-                return
-            path = result.header["outputs"][0]
-            self.conversions[key] = path
-            doc.load(path)
+            ready(result.header["outputs"][0] if result.ok else None, result.error)
 
-        self.owner.render.submit("tool", {"op": "office_to_pdf", "paths": [str(doc.source)],
-                                         "out_dir": out_dir, "reference": True}, done,
-                                 priority=PRI_EXPORT, group=doc.group)
+        self.owner.render.submit(kind, args, done, priority=PRI_EXPORT, group=doc.group)
+
+    def send_table_to_numbers(self, source):
+        from .export_dialog import ExportDialog
+
+        ExportDialog(self, self.owner.render, self.owner.settings, [], destination="Numbers",
+                     table=source).exec()
 
     def close_tab(self, index):
         doc = self.tabs.widget(index)

@@ -7,7 +7,7 @@ from PySide6.QtTest import QTest
 
 from eng_viewer.ui.mark.canvas import MarkCanvas
 from eng_viewer.ui.mark.comments import CommentsPanel
-from eng_viewer.ui.mark.items import AnnotationMixin, BubbleItem, number_path
+from eng_viewer.ui.mark.items import AnnotationMixin, BubbleItem, StampItem, item_from_dict, number_path
 from eng_viewer.ui.mark.tool_options import RANGES, PreviewSlider, ToolSettings, paint_sample, sample_extent
 from eng_viewer.ui.page_view import PageRef
 
@@ -101,6 +101,27 @@ def test_drawing_tools_and_undo_redo(canvas):
     for _ in range(4):
         canvas.undo_stack.redo()
     assert len(canvas.annotations()) == 4
+
+
+def test_stamp_clipboard_keeps_the_placement_date_and_style(canvas, monkeypatch):
+    monkeypatch.setattr("eng_viewer.ui.mark.canvas.placement_date", lambda: "12/11/2026")
+    canvas.ts.set("pass", "alpha", 0.45)
+    canvas.set_tool("pass")
+    click(canvas, QPoint(300, 300))
+    stamp = canvas.annotations()[0]
+    assert isinstance(stamp, StampItem) and stamp.show_date
+    assert stamp.alpha == 0.45 and stamp.color.name() == "#19834b"
+    canvas.set_tool("select")
+    stamp.setSelected(True)
+    canvas.apply_style_to_selection({"show_date": False}, "Hide Date")
+    assert not stamp.show_date and stamp.boundingRect().height() == stamp.height
+    canvas.undo_stack.undo()
+    assert stamp.show_date
+    monkeypatch.setattr("eng_viewer.ui.mark.canvas.placement_date", lambda: "14/11/2026")
+    assert canvas.copy_selection() == 1 and canvas.paste() == 1
+    pasted = canvas.annotations()[0]
+    assert pasted is not stamp and pasted.placed == "12/11/2026"
+    assert item_from_dict(pasted.to_dict()).style() == stamp.style()
 
 
 def test_select_move_style_and_delete(canvas):

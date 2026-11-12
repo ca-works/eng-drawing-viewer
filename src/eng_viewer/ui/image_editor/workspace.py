@@ -1877,6 +1877,27 @@ class ImageWorkspace(QWidget):
         self.owner.add_marked_page(self.doc.source_path or self.state.name, 0, to_qimage(self._composite), text, len(comments))
         self.status.setText("Added image and editable numbered comments to the PowerPoint queue.")
 
+    def send_to_iwork(self, app):
+        if self.doc is None or self._job is not None:
+            return
+        from ..queue_panel import QueueEntry
+
+        image, selection = self._composite, self.selection
+        source = self.doc.source_path or self.state.name
+
+        def prepare():
+            if selection is None:
+                return to_qimage(image)
+            selected = image.copy()
+            selected.putalpha(ImageChops.multiply(image.getchannel("A"), selection))
+            bounds = selected.getbbox()
+            if bounds is None:
+                raise ValueError("The selection contains no visible image.")
+            return to_qimage(selected.crop(bounds))
+
+        self.run("Preparing image", prepare,
+                 lambda result: self.owner.export_iwork(app, [QueueEntry(source, 0, marked_image=result)]))
+
     def export_image(self):
         if self.doc:
             dialog = ExportDialog(self.doc, self)

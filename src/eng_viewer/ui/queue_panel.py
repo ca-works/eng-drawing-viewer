@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import itertools
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -281,6 +282,7 @@ class QueuePanel(QWidget):
     addSelectedRequested = Signal()
     addAllRequested = Signal()
     exportRequested = Signal()
+    sendRequested = Signal(str)
     exportPdfRequested = Signal()
     showEntryRequested = Signal(object)  # QueueEntry
     filesDropped = Signal(list)  # PDFs / images dropped from the file manager: all their pages are queued
@@ -404,6 +406,10 @@ class QueuePanel(QWidget):
             m.addSeparator()
             act = m.addAction(f"Remove {len(rows)} Item{'s' if len(rows) != 1 else ''}", self.remove_selected)
             act.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete))
+        if sys.platform == "darwin":
+            from .iwork_menu import send_menu
+
+            send_menu(m, self.sendRequested.emit, apps=("Keynote", "Pages"), title="Send Queue To").setEnabled(bool(self.model.entries))
         m.addAction("Export Queue as PDF…", self.exportPdfRequested.emit).setEnabled(bool(self.model.entries))
         m.addAction("Clear Queue…", self._confirm_clear).setEnabled(bool(self.model.entries))
         m.exec(self.view.viewport().mapToGlobal(pos))

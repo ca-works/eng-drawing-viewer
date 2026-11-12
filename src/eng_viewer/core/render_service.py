@@ -350,6 +350,10 @@ class RenderService(QObject):
             # and may draw into it (MARK paints on page images), so it must be private and writable.
             payload = _recv_buffer(w.conn)
             image = QImage(payload, header["w"], header["h"], header["stride"], QImage.Format.Format_RGB32)
+        elif has_payload and header.get("format") == "rgba_premultiplied":
+            payload = w.conn.recv_bytes()
+            image = QImage(payload, header["w"], header["h"], header["stride"],
+                           QImage.Format.Format_RGBA8888_Premultiplied).copy()
         elif has_payload:
             payload = w.conn.recv_bytes()
             fmt_raw = QImage.Format.Format_RGB32 if header.get("format") == "bgrx" else QImage.Format.Format_RGB888

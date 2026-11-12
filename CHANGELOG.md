@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.3 — macOS Universal local candidate
+
+- Add vector PASS and FAIL stamps with adjustable opacity and an optional fixed placement date.
+- Open iWork documents in Standards through local PDF export and preview TXT, Markdown, CSV, TSV, and RTF directly.
+- Send drawings to Keynote or Pages and send CSV or TSV tables to Numbers.
+
 ## 2.3.2 — Windows and macOS Apple Silicon (9 November 2026)
 
 Windows and macOS Apple Silicon only; Universal Mac and Linux stay at 2.3.1.

@@ -1,4 +1,4 @@
-"""Export the queue to PowerPoint: options, progress and result in one sheet."""
+"""Export drawings to PowerPoint and hand off compatible files to iWork."""
 from __future__ import annotations
 
 import os
@@ -56,6 +56,8 @@ class ExportController(QObject):
         self.tmp = tempfile.mkdtemp(prefix="eng-drawing-export-")
         self.images: dict[int, tuple[str, int, int]] = {}
         self.cancelled = False
+        self.committing = False
+        self.keynote_target = None
         self.group = ("pptx-export", id(self))
         self._bridge = _SaveBridge(self)
         self._bridge.saved.connect(self._on_saved)
@@ -63,6 +65,23 @@ class ExportController(QObject):
         self._thread = None
 
     def start(self):
+        if self.options.get("table"):
+            self._handoff({"output": self.options["output"], "table": self.options["table"]})
+        elif self.options.get("mode") == "keynote-live":
+            self.progress.emit(0, len(self.entries), "Checking the selected Keynote slide…")
+            self.service.submit("iwork", {"op": "keynote_target"}, self._on_keynote_target,
+                                priority=PRI_EXPORT, group=self.group, dedupe=False)
+        else:
+            self._render_entries()
+
+    def _on_keynote_target(self, result):
+        if not result.ok:
+            self._on_built(result)
+            return
+        self.keynote_target = result.header
+        self._render_entries()
+
+    def _render_entries(self):
         dpi = QUALITY_DPI.get(self.options.get("quality", "high"), 220)
         total = len(self.entries)
         self.progress.emit(0, total, "Preparing slides…")
@@ -73,11 +92,14 @@ class ExportController(QObject):
                 QThreadPool.globalInstance().start(_SaveImage(e.marked_image, out, self._bridge.saved))
             else:
                 args = {"path": e.doc_path, "page": e.page_index, "scale": dpi / 72.0, "reinforce": True,
-                        "max_pixels": EXPORT_MAX_PIXELS, "out_png": out, "dpi": dpi, "native_image": True}
+                        "max_pixels": EXPORT_MAX_PIXELS, "out_png": out, "dpi": dpi, "native_image": True,
+                        "preserve_image_alpha": bool(self.options.get("destination"))}
                 self.service.submit("render", args, lambda res, i=i: self._on_rendered(i, res),
                                     priority=PRI_EXPORT, group=self.group, dedupe=False)
 
     def cancel(self):
+        if self.committing:
+            return
         self.cancelled = True
         self.service.cancel_group(self.group)
         self._cleanup()
@@ -122,6 +144,10 @@ class ExportController(QObject):
         if self.options.get("mode") == "powerpoint":
             self._send_com(slides)
             return
+        if self.keynote_target is not None:
+            self._submit_iwork({"op": "keynote_insert", "target": self.keynote_target, "slides": slides},
+                               "Sending drawings to Keynote…")
+            return
         spec = {
             "output": self.options["output"],
             "mode": self.options.get("mode", "new"),
@@ -132,10 +158,23 @@ class ExportController(QObject):
             "title_mode": title_mode,
             "slides": slides,
         }
+        if self.options.get("destination"):
+            self._handoff(spec)
+            return
         self.progress.emit(total, total, "Building presentation…")
         self.service.submit("pptx", spec, self._on_built, priority=PRI_EXPORT, group=self.group, dedupe=False)
 
+    def _handoff(self, spec):
+        self._submit_iwork({"op": "handoff", "app": self.options["destination"], "spec": spec},
+                           "Building the local import file…")
+
+    def _submit_iwork(self, args, message):
+        self.committing = True
+        self.progress.emit(len(self.entries), len(self.entries), message)
+        self.service.submit("iwork", args, self._on_built, priority=PRI_EXPORT, group=self.group, dedupe=False)
+
     def _on_built(self, res: RenderResult):
+        self.committing = False
         self._cleanup()
         if self.cancelled:
             return
@@ -156,10 +195,14 @@ class ExportController(QObject):
 
 
 class ExportDialog(QDialog):
-    def __init__(self, parent, service: RenderService, settings: Settings, entries: list[QueueEntry]):
+    def __init__(self, parent, service: RenderService, settings: Settings, entries: list[QueueEntry],
+                 *, destination=None, table=None):
         super().__init__(parent)
         self.setObjectName("Sheet")
-        self.setWindowTitle("Export to PowerPoint")
+        self.destination = destination
+        self.table = Path(table) if table else None
+        self.heading = f"Send to {destination}" if destination else "Export to PowerPoint"
+        self.setWindowTitle(self.heading)
         self.setModal(True)
         self.setMinimumWidth(520)
         self.service = service
@@ -189,10 +232,12 @@ class ExportDialog(QDialog):
         head.addWidget(ic)
         tbox = QVBoxLayout()
         tbox.setSpacing(2)
-        tbox.addWidget(label("Export to PowerPoint", "heading"))
+        tbox.addWidget(label(self.heading, "heading"))
         docs = len({e.doc_path for e in self.entries})
         marked = sum(1 for e in self.entries if e.marked)
-        summary = f"{len(self.entries)} slide{'s' if len(self.entries) != 1 else ''} from {docs} drawing{'s' if docs != 1 else ''}"
+        summary = (self.table.name if self.table else
+                   f"{len(self.entries)} {'page' if self.destination == 'Pages' else 'slide'}"
+                   f"{'s' if len(self.entries) != 1 else ''} from {docs} drawing{'s' if docs != 1 else ''}")
         if marked:
             summary += f" · {marked} MARKed"
         tbox.addWidget(label(summary, "secondary"))
@@ -203,7 +248,9 @@ class ExportDialog(QDialog):
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(10)
         row = 0
-        grid.addWidget(label("Destination", "secondary"), row, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        destination_label = label("Destination", "secondary")
+        destination_label.setVisible(self.destination in (None, "Keynote"))
+        grid.addWidget(destination_label, row, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
         dest = QVBoxLayout()
         dest.setSpacing(6)
         self.rb_new = QRadioButton("New presentation")
@@ -213,6 +260,15 @@ class ExportDialog(QDialog):
         self.mode_group.addButton(self.rb_existing)
         dest.addWidget(self.rb_new)
         dest.addWidget(self.rb_existing)
+        self.rb_keynote = None
+        if self.destination:
+            self.rb_existing.hide()
+            self.rb_new.setVisible(self.destination == "Keynote")
+        if self.destination == "Keynote":
+            self.rb_new.setText("Open a new presentation in Keynote")
+            self.rb_keynote = QRadioButton("Insert after the selected slide in the front Keynote presentation")
+            self.mode_group.addButton(self.rb_keynote)
+            dest.addWidget(self.rb_keynote)
         ex_row = QHBoxLayout()
         ex_row.setContentsMargins(24, 0, 0, 0)
         self.choose_btn = secondary_button("Choose…")
@@ -222,6 +278,9 @@ class ExportDialog(QDialog):
         self.template_label.setProperty("role", "secondary")
         ex_row.addWidget(self.template_label, 1)
         dest.addLayout(ex_row)
+        if self.destination:
+            self.choose_btn.hide()
+            self.template_label.hide()
         self.existing_opts = QWidget()
         eo = QHBoxLayout(self.existing_opts)
         eo.setContentsMargins(24, 0, 0, 0)
@@ -236,7 +295,7 @@ class ExportDialog(QDialog):
         dest.addWidget(self.existing_opts)
         self.com_combo = None
         self.rb_com = None
-        if IS_WIN:
+        if IS_WIN and not self.destination:
             # Presentations open in PowerPoint are looked up on a worker thread (PowerPoint can take
             # a while to answer); the option appears only if there are any.
             from ..platform.windows_powerpoint import PresentationLookup
@@ -257,16 +316,22 @@ class ExportDialog(QDialog):
         grid.addLayout(dest, row, 1)
         row += 1
 
-        grid.addWidget(label("Slide title", "secondary"), row, 0, Qt.AlignmentFlag.AlignRight)
+        self.title_label = label("Heading" if self.destination == "Pages" else "Slide title", "secondary")
+        self.title_label.setVisible(self.table is None)
+        grid.addWidget(self.title_label, row, 0, Qt.AlignmentFlag.AlignRight)
         self.title_seg = SegmentedControl([("none", "None", None, "No filename on the slide"),
                                            ("title", "Filename as title", None, "Editable slide title"),
                                            ("subtitle", "As subtitle", None, "Editable subtitle")])
+        self.title_seg.setVisible(self.table is None)
         grid.addWidget(self.title_seg, row, 1, Qt.AlignmentFlag.AlignLeft)
         row += 1
-        grid.addWidget(label("Image quality", "secondary"), row, 0, Qt.AlignmentFlag.AlignRight)
+        quality_label = label("Image quality", "secondary")
+        quality_label.setVisible(self.table is None)
+        grid.addWidget(quality_label, row, 0, Qt.AlignmentFlag.AlignRight)
         self.quality_seg = SegmentedControl([("standard", "150 DPI", None, "Standard — smaller files"),
                                              ("high", "220 DPI", None, "High — recommended"),
                                              ("max", "300 DPI", None, "Maximum — largest files")])
+        self.quality_seg.setVisible(self.table is None)
         grid.addWidget(self.quality_seg, row, 1, Qt.AlignmentFlag.AlignLeft)
         row += 1
         self.size_label = label("Slide size", "secondary")
@@ -275,13 +340,22 @@ class ExportDialog(QDialog):
         grid.addWidget(self.size_seg, row, 1, Qt.AlignmentFlag.AlignLeft)
         row += 1
         self.open_when_done = QCheckBox("Open the presentation when finished")
-        self.open_when_done.setChecked(bool(self.settings.get("export_open_after", True)))
+        self.open_when_done.setChecked(bool(self.destination or self.settings.get("export_open_after", True)))
+        self.open_when_done.setVisible(self.destination is None)
         grid.addWidget(self.open_when_done, row, 1)
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
 
-        note = label("Filenames and comments stay editable in PowerPoint. Drawings are embedded as high-resolution images "
-                     "with thin-line reinforcement. Microsoft PowerPoint does not need to be installed.", "tertiary", wrap=True)
+        descriptions = {
+            "Keynote": "Open a new PowerPoint-format file in Keynote, or add images after the selected slide. "
+                       "Insertion uses the slide’s layout and may require macOS Automation permission.",
+            "Pages": "Save a Word-format document and open it in Pages. Images are placed at their original proportions.",
+            "Numbers": "Save an Excel-format workbook and open it in Numbers. Cell values are imported as literal text.",
+        }
+        note = label(descriptions.get(self.destination,
+                     "Filenames and comments stay editable in PowerPoint. Drawings are embedded as high-resolution images "
+                     "with thin-line reinforcement. Microsoft PowerPoint does not need to be installed."),
+                     "tertiary", wrap=True)
         lay.addWidget(note)
 
         btns = QHBoxLayout()
@@ -297,7 +371,7 @@ class ExportDialog(QDialog):
 
         # Restore choices
         mode = self.settings.get("export_mode")
-        (self.rb_existing if mode == "existing" else self.rb_new).setChecked(True)
+        (self.rb_existing if mode == "existing" and not self.destination else self.rb_new).setChecked(True)
         self.existing_seg.set_current(self.settings.get("existing_mode"))
         self.title_seg.set_current(self.settings.get("filename_placement"))
         self.quality_seg.set_current(self.settings.get("quality"))
@@ -311,7 +385,7 @@ class ExportDialog(QDialog):
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 10, 0, 0)
         lay.setSpacing(12)
-        lay.addWidget(label("Exporting to PowerPoint…", "heading"))
+        lay.addWidget(label(self.heading + "…", "heading"))
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(6)
@@ -370,6 +444,8 @@ class ExportDialog(QDialog):
 
     # ------------------------------------------------------------ actions
     def _mode(self) -> str:
+        if self.rb_keynote is not None and self.rb_keynote.isChecked():
+            return "keynote-live"
         if self.rb_existing.isChecked():
             return "existing"
         if self.com_combo is not None and self.rb_com is not None and self.rb_com.isChecked():
@@ -383,11 +459,16 @@ class ExportDialog(QDialog):
         self.template_label.setEnabled(existing)
         self.existing_opts.setVisible(existing or mode == "powerpoint")
         self.existing_seg.setVisible(existing)
-        self.size_seg.setVisible(mode == "new")
-        self.size_label.setVisible(mode == "new")
+        size_visible = mode == "new" and self.destination in (None, "Keynote")
+        self.size_seg.setVisible(size_visible)
+        self.size_label.setVisible(size_visible)
+        show_title = self.table is None and mode != "keynote-live"
+        self.title_seg.setVisible(show_title)
+        self.title_label.setVisible(show_title)
         if self.com_combo is not None:
             self.com_combo.setEnabled(mode == "powerpoint")
-        self.export_btn.setText("Export…" if mode == "new" else "Export")
+        self.export_btn.setText(("Insert Slides" if mode == "keynote-live" else "Save and Open…")
+                                if self.destination else ("Export…" if mode == "new" else "Export"))
         self.export_btn.setEnabled(mode != "existing" or self.template_path is not None)
 
     def _choose_template(self):
@@ -409,7 +490,24 @@ class ExportDialog(QDialog):
             "existing_mode": self.existing_seg.current_key(),
             "start_slide": self.start_spin.value(),
         }
-        if mode == "new":
+        if self.destination:
+            from .iwork_menu import EXTENSIONS
+
+            opts["destination"] = self.destination
+            opts["table"] = str(self.table) if self.table else None
+            if mode == "keynote-live":
+                opts["title_mode"] = "title"  # filename and callouts go in Keynote's presenter notes
+            else:
+                extension = EXTENSIONS[self.destination]
+                folder = Path(self.settings.get("export_dir") or Path.home() / "Documents")
+                stem = self.table.stem if self.table else f"Drawings {date.today().isoformat()}"
+                default = folder / (stem + extension)
+                path, _ = QFileDialog.getSaveFileName(self, f"Save for {self.destination}", str(default),
+                                                      f"Import file (*{extension})")
+                if not path:
+                    return
+                opts["output"] = path if path.casefold().endswith(extension) else path + extension
+        elif mode == "new":
             folder = self.settings.get("export_dir") or str(Path.home() / "Documents")
             default = Path(folder) / f"Drawings {date.today().isoformat()}.pptx"
             path, _ = QFileDialog.getSaveFileName(self, "Save presentation", str(default), "PowerPoint presentation (*.pptx)")
@@ -431,18 +529,20 @@ class ExportDialog(QDialog):
             opts["output"] = path
         else:
             opts["target"] = self.com_combo.currentData()
-        self.settings.set("export_mode", "existing" if mode == "existing" else "new")
-        self.settings.set("existing_mode", opts["existing_mode"])
-        self.settings.set("filename_placement", opts["title_mode"])
-        self.settings.set("quality", opts["quality"])
-        self.settings.set("slide_size", opts["slide_size"])
-        self.settings.set("export_open_after", self.open_when_done.isChecked())
+        if self.destination is None:
+            self.settings.set("export_mode", "existing" if mode == "existing" else "new")
+            self.settings.set("existing_mode", opts["existing_mode"])
+            self.settings.set("filename_placement", opts["title_mode"])
+            self.settings.set("quality", opts["quality"])
+            self.settings.set("slide_size", opts["slide_size"])
+            self.settings.set("export_open_after", self.open_when_done.isChecked())
         if opts.get("output"):
             self.settings.set("export_dir", str(Path(opts["output"]).parent))
         self.settings.save()
 
         self.stack.setCurrentIndex(1)
         self.progress.setRange(0, len(self.entries))
+        self.cancel_export_btn.setEnabled(True)
         self.controller = ExportController(self.service, self.entries, opts, self)
         self.controller.progress.connect(self._on_progress)
         self.controller.finished.connect(self._on_finished)
@@ -450,6 +550,7 @@ class ExportDialog(QDialog):
         self.controller.start()
 
     def _on_progress(self, done: int, total: int, text: str):
+        self.cancel_export_btn.setEnabled(not self.controller.committing)
         self.progress.setRange(0, total)
         self.progress.setValue(done)
         if text.startswith("Building") or text.startswith("Sending"):
@@ -459,10 +560,15 @@ class ExportDialog(QDialog):
     def _on_finished(self, info: dict):
         self.result_path = info.get("path")
         n = info.get("slides", 0)
-        self.done_title.setText(f"Exported {n} slide{'s' if n != 1 else ''}")
+        if info.get("live"):
+            self.done_title.setText(f"Inserted {n} slide{'s' if n != 1 else ''} in Keynote")
+        elif self.destination:
+            self.done_title.setText(f"File ready for {self.destination}")
+        else:
+            self.done_title.setText(f"Exported {n} slide{'s' if n != 1 else ''}")
         self.done_path.setText(self.result_path or "")
         self.stack.setCurrentIndex(2)
-        com = info.get("com")
+        com = info.get("com") or info.get("live")
         self.reveal_btn.setVisible(not com)
         self.open_btn.setVisible(not com)
         if self.open_when_done.isChecked() and not com and self.result_path:
@@ -480,10 +586,16 @@ class ExportDialog(QDialog):
         self.stack.setCurrentIndex(0)
 
     def _open_result(self):
-        if self.result_path:
+        if self.result_path and self.destination:
+            from .iwork_menu import open_result
+
+            open_result(self, self.destination, self.result_path)
+        elif self.result_path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.result_path))
 
     def reject(self):
         if self.controller is not None and self.stack.currentIndex() == 1:
+            if self.controller.committing:
+                return
             self.controller.cancel()
         super().reject()

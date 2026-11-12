@@ -60,6 +60,7 @@ ICONS: dict[str, str] = {
     "plus": '<path d="M12 5v14M5 12h14"/>',
     "minus": '<path d="M5 12h14"/>',
     "x": '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+    "stamp": '<rect x="3" y="6" width="18" height="12" rx="3"/><path d="M8 12h8"/>',
     "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     "trash": '<path d="M4 7h16M9.5 7V5.2a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7M6.5 7l.8 11.6a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9L17.5 7M10 11v5.5M14 11v5.5"/>',
     "search": '<circle cx="10.8" cy="10.8" r="6.3"/><path d="M20 20l-4.7-4.7"/>',
