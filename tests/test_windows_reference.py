@@ -3,9 +3,9 @@ import sys
 
 import pymupdf
 import pytest
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QPixmap, QWheelEvent
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit
 
 from eng_viewer.ui.main_window import MainWindow
 
@@ -45,6 +45,13 @@ def test_reference_continuous_scroll_and_document_history(qtbot, render, theme, 
     assert len(view.requested) < 10
     assert second.total.text() == "1 / 1"
     bar = view.verticalScrollBar()
+    before = bar.value()
+    pos = QPointF(50, 50)
+    touchpad = QWheelEvent(pos, QPointF(view.viewport().mapToGlobal(pos.toPoint())),
+                           QPoint(0, -42), QPoint(), Qt.MouseButton.NoButton,
+                           Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.ScrollUpdate, False)
+    QApplication.sendEvent(view.viewport(), touchpad)
+    assert touchpad.isAccepted() and bar.value() == before + 42
     bar.setValue(round(view.bottoms[0] * view.zoom) - view.viewport().height() // 2)
     qtbot.waitUntil(lambda: {0, 1}.issubset(view.requested))
 

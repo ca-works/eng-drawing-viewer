@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.5 — Windows x64
+
+- Handle precision touchpad scrolling in the Reference panel.
+
 ## 2.3.4 — Windows x64
 
 - Rename the Standards panel to Reference and simplify its toolbar. The arrows switch between open documents.

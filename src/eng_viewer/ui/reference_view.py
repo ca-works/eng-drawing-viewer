@@ -144,6 +144,20 @@ class ContinuousReferenceView(PageView):
     def drawForeground(self, painter, rect):
         pass
 
+    def wheelEvent(self, event):
+        delta = event.pixelDelta()
+        if delta.isNull() or event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
+        self._scroll_anim.stop()
+        horizontal, vertical = self.horizontalScrollBar(), self.verticalScrollBar()
+        dx, dy = delta.x(), delta.y()
+        if not dx and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            dx, dy = dy, 0
+        horizontal.setValue(horizontal.value() - dx)
+        vertical.setValue(vertical.value() - dy)
+        event.accept()
+
     def release(self):
         self._tile_timer.stop()
         for index in self.requested:
