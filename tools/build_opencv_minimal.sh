@@ -66,6 +66,13 @@ echo "==> Building (core, imgproc, photo)"
 export ENABLE_HEADLESS=1
 export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
+# Cross-compiling for the other Mac architecture (an Intel Mac building arm64): tell setuptools the
+# target so the extension is compiled for it and the wheel carries the right platform tag.
+if [[ "$(uname -s)" == Darwin && -n "${OPENCV_OSX_ARCH:-}" && "$OPENCV_OSX_ARCH" != "$(uname -m)" ]]; then
+  export ARCHFLAGS="-arch $OPENCV_OSX_ARCH"
+  export _PYTHON_HOST_PLATFORM="macosx-${MACOSX_DEPLOYMENT_TARGET}-$OPENCV_OSX_ARCH"
+  CROSS_CMAKE=" -DCMAKE_SYSTEM_PROCESSOR=$OPENCV_OSX_ARCH"
+fi
 # Nothing is downloaded during the build (IPP and ITT fetch binaries) and no optional backend is used.
 # Java/JNI detection is off: OpenCV records what CMake finds in its build information string, so a
 # JDK in the builder's home folder would put that folder's path into cv2.
@@ -76,9 +83,12 @@ export CMAKE_ARGS="-DBUILD_LIST=core,imgproc,photo,python3 -DWITH_FFMPEG=OFF -DW
 -DWITH_V4L=OFF -DWITH_1394=OFF -DWITH_VTK=OFF -DOPENCV_GENERATE_PKGCONFIG=OFF \
 -DBUILD_JAVA=OFF -DBUILD_opencv_java_bindings_generator=OFF -DCMAKE_DISABLE_FIND_PACKAGE_JNI=ON \
 -DCMAKE_DISABLE_FIND_PACKAGE_Java=ON -DCMAKE_DISABLE_FIND_PACKAGE_Ant=ON \
--DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET${OPENCV_OSX_ARCH:+ -DCMAKE_OSX_ARCHITECTURES=$OPENCV_OSX_ARCH}"
+-DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET${OPENCV_OSX_ARCH:+ -DCMAKE_OSX_ARCHITECTURES=$OPENCV_OSX_ARCH}${CROSS_CMAKE:-}"
 # Linux: cv2 links only system libraries, so it needs no RPATH (the build would record its own folder).
 [[ "$(uname -s)" == Linux ]] && CMAKE_ARGS+=" -DCMAKE_SKIP_RPATH=ON"
+# Extra options for one edition (Linux: packaging/linux/build_opencv_linux.sh); unset for the Mac
+# editions, whose options are exactly the ones above.
+if [[ -n "${OPENCV_EXTRA_CMAKE_ARGS:-}" ]]; then CMAKE_ARGS="$CMAKE_ARGS $OPENCV_EXTRA_CMAKE_ARGS"; fi
 (cd "$WORK/opencv_python_headless-$VERSION" && "$VPY" -m pip wheel . --no-build-isolation --no-deps -w "$OUT")
 "$VPY" - "$OUT" <<'PYEOF'
 import re, sys, zipfile, pathlib

@@ -63,7 +63,10 @@ if [[ "$EDITION" == universal ]]; then
   for a in arm64 x86_64; do
     lipo "$FUSED_PY" -verify_arch "$a" || { echo "$FUSED_PY lacks $a" >&2; exit 1; }
   done
-  if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+  # Apple Silicon host: the Intel half is tested under Rosetta 2. Intel host: the Intel half runs
+  # natively and the arm64 half cannot run here (it is checked structurally only: lipo, file,
+  # check_bundle); RUN_ARM64=0 records that.
+  if [[ "$ARCH" == arm64 ]] && ! arch -x86_64 /usr/bin/true 2>/dev/null; then
     echo "Rosetta 2 is needed to test the Intel half (softwareupdate --install-rosetta --agree-to-license)" >&2
     exit 1
   fi
@@ -163,15 +166,24 @@ PYEOF
   rm -rf "$dir"
 }
 smoke "$ARCH" "native $ARCH"
-if [[ "$EDITION" == universal ]]; then
+if [[ "$EDITION" == universal && "$ARCH" == arm64 ]]; then
   smoke x86_64 "Intel code under Rosetta 2"
+elif [[ "$EDITION" == universal ]]; then
+  step "arm64 slice not executed: this is an Intel Mac (slices verified structurally only)"
 fi
 
 step "Packaging DMG and ZIP"
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-cp packaging/macos/READ_ME.txt "$STAGE/Read Me.txt"
+if [[ "$EDITION" == universal ]]; then
+  sed -e 's/on a Mac with Apple silicon (M1 or newer)\./on a Mac with an Intel processor or Apple silicon (M1 or newer)./' \
+      -e 's/ENG Drawing Viewer for Mac (Apple silicon)/ENG Drawing Viewer for Mac (Universal: Intel and Apple silicon)/' \
+      -e 's/^==========================================$/==========================================================/' \
+      packaging/macos/READ_ME.txt > "$STAGE/Read Me.txt"
+else
+  cp packaging/macos/READ_ME.txt "$STAGE/Read Me.txt"
+fi
 cp LICENSE "$STAGE/Licence.txt"
 hdiutil create -quiet -volname "$APP_NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$OUT/$BASENAME.dmg"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$BASENAME.zip"

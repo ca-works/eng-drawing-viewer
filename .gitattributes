@@ -6,3 +6,6 @@
 *.png binary
 *.ico binary
 *.icns binary
+
+# Published release files are kept byte-for-byte (their SHA-256 is checked by tools/publish_winlinux_231.sh).
+docs/release-2.3.1-winlinux/THIRD_PARTY_NOTICES-*.txt -text

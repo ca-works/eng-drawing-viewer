@@ -127,6 +127,31 @@ def _layout(pres, want_title: bool):
     return best
 
 
+def _insert_with_background(pres, index, layout):
+    """Let Office preserve the preceding slide's effective background and theme.
+
+    Duplication preserves picture relationships, gradients, layout/master choices and
+    slide overrides without guessing at FillFormat. Remove every foreground shape
+    before adding application content. Never save or overwrite the presentation.
+    """
+    if index <= 1:
+        return pres.Slides.AddSlide(index, layout)
+    slide = pres.Slides.Item(index - 1).Duplicate().Item(1)
+    try:
+        for j in range(slide.Shapes.Count, 0, -1):
+            slide.Shapes.Item(j).Delete()
+        # Speaker notes from the source are unrelated to the generated drawing.
+        notes = slide.NotesPage.Shapes
+        for j in range(1, notes.Count + 1):
+            shape = notes.Item(j)
+            if shape.HasTextFrame:
+                shape.TextFrame.TextRange.Text = ""
+    except Exception:
+        slide.Delete()
+        raise
+    return slide
+
+
 def _clear_placeholders(slide, keep_title: bool):
     shapes = slide.Shapes
     for j in range(shapes.Count, 0, -1):
@@ -220,7 +245,7 @@ def send_slides(slides: list[dict], target: str, start_slide: int, title_mode: s
         index = max(1, min(int(start_slide), pres.Slides.Count + 1))
         first = index
         for item in slides:
-            slide = _retry(lambda: pres.Slides.AddSlide(index, layout))
+            slide = _retry(lambda: _insert_with_background(pres, index, layout))
             _clear_placeholders(slide, keep_title=(title_mode == "title"))
             _place_filename(slide, item.get("title", ""), title_mode, sw, sh)
             top = sh * (0.145 if title_mode == "title" else 0.125 if title_mode == "subtitle" else 0.05)

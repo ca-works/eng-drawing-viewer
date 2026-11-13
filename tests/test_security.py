@@ -20,14 +20,20 @@ def sample(path, text='Sample'):
     return str(path)
 
 
-def test_hardlink_and_symlink_outputs_rejected(tmp_path):
+@pytest.mark.parametrize('link, make', [('hard.pdf', os.link), ('sym.pdf', os.symlink)],
+                         ids=['hardlink', 'symlink'])
+def test_link_output_rejected(tmp_path, link, make):
     source = tmp_path / 'in.pdf'
     sample(source)
-    for link, make in [('hard.pdf', os.link), ('sym.pdf', os.symlink)]:
-        target = tmp_path / link
+    target = tmp_path / link
+    try:
         make(source, target)
-        with pytest.raises(pdf_tools.ToolError):
-            pdf_tools._check_output(str(target), [str(source)])
+    except OSError as exc:
+        if os.name == 'nt' and make is os.symlink and getattr(exc, 'winerror', None) == 1314:
+            pytest.skip('Windows account lacks permission to create a symbolic link')
+        raise
+    with pytest.raises(pdf_tools.ToolError):
+        pdf_tools._check_output(str(target), [str(source)])
 
 
 def test_excel_text_is_never_formula_or_link(tmp_path):

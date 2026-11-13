@@ -245,6 +245,13 @@ def _fake_powerpoint(slide_count=3):
         return slide
 
     pres.Slides.AddSlide.side_effect = add_slide
+
+    def preceding(index):
+        source = MagicMock()
+        source.Duplicate.return_value.Item.side_effect = lambda _: add_slide(index + 1, layouts[1])
+        return source
+
+    pres.Slides.Item.side_effect = preceding
     return app, pres, layouts, added
 
 

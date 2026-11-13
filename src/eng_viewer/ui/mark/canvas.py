@@ -11,12 +11,12 @@ from ...core.render_service import RenderService
 from ..page_view import PageView
 from .commands import AddItems, ChangeStyle, EditText, MoveItems, RemoveItems, Renumber, ResizeItems, SetComment
 from .items import (ANNOTATION, AnnotationMixin, ArrowItem, BubbleItem, EllipseItem, GhostItem, SelectionOverlay,
-                    StrokeItem, TextItem, item_from_dict)
+                    STAMP_TOOLS, SYMBOL_TOOLS, StampItem, StrokeItem, SymbolItem, TextItem, item_from_dict, placement_date)
 
-TOOLS = ("select", "pen", "highlighter", "text", "arrow", "circle", "bubble", "eraser")
+TOOLS = ("select", "pen", "highlighter", "text", "arrow", "circle", *SYMBOL_TOOLS, *STAMP_TOOLS, "bubble", "eraser")
 TOOL_NAMES = {
     "select": "Select", "pen": "Pen", "highlighter": "Highlighter", "text": "Text",
-    "arrow": "Arrow", "circle": "Circle", "bubble": "Callout", "eraser": "Eraser",
+    "arrow": "Arrow", "circle": "Circle", "checkmark": "Checkmark", "cross": "Cross", "pass": "PASS", "fail": "FAIL", "bubble": "Callout", "eraser": "Eraser",
 }
 
 
@@ -127,6 +127,10 @@ class MarkCanvas(PageView):
             self.ghost.configure("bubble", QColor("red"), st["size"], number=self.next_number(), fill=st.get("fill", False))
         elif t == "eraser":
             self.ghost.configure("eraser", QColor("black"), 0, screen_px=st["size"])
+        elif t in STAMP_TOOLS:
+            self.ghost.configure(t, QColor(st["color"]), st["size"], alpha=st["alpha"], show_date=st["show_date"])
+        elif t in SYMBOL_TOOLS:
+            self.ghost.configure(t, QColor(st["color"]), st["size"], width=st["width"])
         elif t in ("pen", "highlighter", "text", "arrow", "circle"):
             self.ghost.configure(t, QColor(st["color"]), st["size"], alpha=st.get("alpha", 1.0))
         if at is not None:
@@ -448,6 +452,14 @@ class MarkCanvas(PageView):
             item.add_point(pos)
             self.scene_obj.addItem(item)
             self._drawing = item
+        elif tool in STAMP_TOOLS:
+            stamp = StampItem(tool, color, st["size"], st["alpha"], st["show_date"], placement_date())
+            stamp.setPos(pos)
+            self.undo_stack.push(AddItems(self, [stamp], f"Add {TOOL_NAMES[tool]} Stamp"))
+        elif tool in SYMBOL_TOOLS:
+            item = SymbolItem(tool, color, st["size"], st["width"])
+            item.setPos(pos)
+            self.undo_stack.push(AddItems(self, [item], f"Add {TOOL_NAMES[tool]}"))
         elif tool == "arrow":
             self._shape_start = pos
             self._drawing = ArrowItem(pos, pos, color, st["size"])

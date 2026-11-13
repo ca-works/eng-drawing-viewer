@@ -1,14 +1,22 @@
 # Changelog
 
-## 2.3.2 — Windows and macOS Apple Silicon (9 November 2026)
+## 2.3.4 — Windows x64
 
-Windows and macOS Apple Silicon only; Universal Mac and Linux stay at 2.3.1.
+- Rename the Standards panel to Reference and simplify its toolbar. The arrows switch between open documents.
+- Scroll continuously through PDF pages, with visible pages rendered on demand.
+- Add text annotations and undo or redo completed annotation edits across pages in the active document.
 
-### New
-- **Windows: one-file installer.** Windows now downloads as a single Setup program: it installs for your user (no administrator rights), adds a Start menu entry and an optional desktop shortcut, and uninstalls from Settings > Apps.
-- **MARK: select and resize.** Click an annotation to show resize handles; drag them to resize (Shift keeps the proportions) or drag the object to move it.
-- **MARK: multiple selection.** Drag a rectangle on empty space, or Shift-click to add or remove objects, then move, delete or copy them together.
-- **MARK: copy and paste between drawings.** Ctrl+C (⌘C on Mac) copies the selected annotations as editable objects; Ctrl+V (⌘V) pastes them on the same drawing or another one. Pasted callouts continue the numbering and keep their comments. With nothing selected, Ctrl+C still copies the marked page as an image.
+## 2.3.3 — Windows x64
+
+- Reuse shared MARK symbols and inspection stamps, VIEWER annotation overlays, Standards Reference, and image-editor empty-canvas fixes.
+- Add passive Windows document previews and preserve the preceding slide background during live PowerPoint insertion.
+- Keep the single-file, per-user Windows installer. Native testing covered installation, upgrade from 2.3.2, launch, and uninstall.
+
+## 2.3.3 — macOS Universal local candidate
+
+- Add vector PASS and FAIL stamps with adjustable opacity and an optional fixed placement date.
+- Open iWork documents in Standards through local PDF export and preview TXT, Markdown, CSV, TSV, and RTF directly.
+- Send drawings to Keynote or Pages and send CSV or TSV tables to Numbers.
 
 ## 2.3.1 — macOS Apple Silicon (4 November 2026)
 
@@ -25,7 +33,7 @@ docs/TEST_RESULTS.md.
   snapping guides, arrow-key nudging, numeric X/Y/W/H/angle, Fit to canvas, Reveal All, Flip and
   Reset. Layers keep their original pixels, so repeated transforms never compound blur.
 - **Photoshop clipboard keys**: ⌘C copies the layer or selected pixels, ⇧⌘C the merged image, ⌘X
-  cuts, Ctrl+V (⌘V) pastes as a new layer (or a new document when none is open), ⌘J duplicates or makes a
+  cuts, ⌘V pastes as a new layer (or a new document when none is open), ⌘J duplicates or makes a
   layer via copy, ⇧⌘J layer via cut. Copies keep masks, opacity, blend mode and position inside the
   editor and reach other apps as PNG/TIFF in the chosen clipboard format.
 - **Paint Bucket (G)** with tolerance, contiguous, anti-aliasing, selection limits, sample all
@@ -79,6 +87,10 @@ published as the 2.2.1 Windows Preview (below) and brings its shared fixes to th
 - Every edition ships a minimal OpenCV (core, imgproc, photo) built from the official source
   release, without FFmpeg, OpenSSL, libssh or image codecs: smaller downloads, no unused network
   or video code, and no OpenSSL 1.1.1 in the Linux AppImage.
+  release, without FFmpeg, OpenSSL, libssh, OpenCL or image codecs. On Windows this removes FFmpeg's
+  video plugin DLL; on Linux FFmpeg, OpenSSL 1.1.1k, OpenBLAS (OpenCV's copy) and their codec
+  libraries, and the AppImage shrinks from 177 MB to 134 MB. On Linux the OpenCV build keeps glibc
+  2.34 and GLIBCXX 3.4.29 as the minimum (RHEL/Rocky 9 and later).
 
 ## 2.2.1 — Windows release
 

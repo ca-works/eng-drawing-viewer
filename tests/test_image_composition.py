@@ -47,6 +47,20 @@ def test_repeated_transforms_resample_once_from_original_pixels():
     assert doc.active_layer.frame[:2] == pytest.approx((400, 300))
 
 
+def test_deleting_last_layer_round_trips_as_an_empty_project():
+    doc = ImageDocument.from_image(_two_tone(), "Base")
+    doc.remove_layer(0)
+    assert doc.active_layer is None and doc.composite().getbbox() is None
+    empty = ImageDocument.from_bytes(doc.to_bytes())
+    assert empty.layers == [] and empty.active_index == -1
+    empty.insert_layer(ImageLayer("New layer", _two_tone()))
+    assert empty.active_index == 0 and empty.active_layer.name == "New layer"
+    doc.undo()
+    assert doc.active_layer is not None
+    doc.redo()
+    assert doc.active_layer is None
+
+
 def test_transform_keeps_mask_aligned_and_undo_restores():
     doc = ImageDocument(400, 400)
     mask = Image.new("L", (100, 100), 255)
@@ -155,8 +169,11 @@ def wait(qtbot, e):
 
 
 @pytest.fixture
-def pasteboard(monkeypatch):
-    """A private clipboard: the native one on macOS (a uniquely named pasteboard), Qt's elsewhere."""
+def pasteboard(monkeypatch, qapp):
+    """A private clipboard: the native one on macOS (a uniquely named pasteboard), Qt's elsewhere.
+
+    Elsewhere it is the real system clipboard, which outlives a test process: an earlier pytest run (the
+    CI runs the suite twice on one Windows desktop) can leave an image on it. Start and end empty."""
     if sys.platform == "darwin":
         from AppKit import NSPasteboard
         pb = NSPasteboard.pasteboardWithUniqueName()
@@ -166,7 +183,9 @@ def pasteboard(monkeypatch):
         yield pb
         pb.releaseGlobally()
     else:
+        qapp.clipboard().clear()
         yield None
+        qapp.clipboard().clear()
 
 
 def _put_png(pb, image):
@@ -203,6 +222,9 @@ def test_paste_image_with_alpha_as_new_layer_and_as_document(editor, pasteboard,
 
 
 def test_copy_layer_selection_merged_cut_and_cross_document(editor, pasteboard, qtbot):
+    from PySide6.QtGui import QGuiApplication
+    if sys.platform == "win32" and QGuiApplication.platformName() != "windows":
+        pytest.skip("Windows writes the native clipboard; Qt's offscreen platform reads only its own")
     e, errors = editor
     base = Image.new("RGBA", (300, 200), (255, 255, 255, 255))
     e.add_document(ImageDocument.from_image(base), "A")
@@ -241,7 +263,12 @@ def test_copy_layer_selection_merged_cut_and_cross_document(editor, pasteboard, 
     merged = e.doc.active_layer
     assert merged.image.size == (300, 200)
     cx, cy, *_ = merged.frame
-    assert abs(cx - 450) <= 1 and abs(cy - 350) <= 1
+    # Pasting centres on the middle of the visible area. When the view is zoomed out one view pixel
+    # spans 1/scale canvas pixels, so the centre is only that exact: Windows' classic scrollbars give
+    # a different viewport size than macOS or Linux.
+    scale = abs(e.canvas.transform().m11()) or 1.0
+    tol = 1 + 1 / min(scale, 1.0)
+    assert abs(cx - 450) <= tol and abs(cy - 350) <= tol
     assert not errors
 
 
@@ -459,7 +486,8 @@ def test_edit_menu_commands_belong_to_the_image_workspace(editor):
     w.set_mode("viewer")
     assert not any(a.isEnabled() for a in w.image_actions)
     w.set_mode("image")
-    keys = {a.text(): a.shortcut().toString() for a in w.image_actions}
+    # Windows and Linux menus carry &mnemonics ("&Paste as New Layer"); macOS has none.
+    keys = {a.text().replace("&", ""): a.shortcut().toString() for a in w.image_actions}
     assert keys["Paste as New Layer"] and keys["Duplicate Layer / Layer via Copy"] == "Ctrl+J"
     assert w.act_copy.text() == "Copy Layer or Selection" and w.act_copy.isEnabled()
     assert w.act_copy_name.text() == "Copy Merged" and w.act_copy_name.isEnabled()

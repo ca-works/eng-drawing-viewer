@@ -17,13 +17,20 @@ Output in release\windows\:
   ENG-Drawing-Viewer-<version>-Windows-x64-Setup.exe          (with -Installer)
   ENG-Drawing-Viewer-<version>-Windows-x64.cdx.json           software bill of materials
 
+Release builds pass -OpencvWheel (or set OPENCV_WHEEL) with the minimal OpenCV wheel from
+tools\build_opencv_minimal_windows.py: the published wheel bundles FFmpeg
+(opencv_videoio_ffmpeg500_64.dll), which the app never uses. Without it the build stops unless
+-AllowPublishedOpencv is given (local testing only; the bundle check then reports FFmpeg).
+
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1 -Installer
 #>
 param(
     [string]$Python = "3.13.16",
     [switch]$Installer,
-    [switch]$SkipSmokeTest
+    [switch]$SkipSmokeTest,
+    [string]$OpencvWheel = $env:OPENCV_WHEEL,
+    [switch]$AllowPublishedOpencv
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -68,15 +75,15 @@ if (-not (Test-Path "$Venv\Scripts\python.exe")) {
 $Py = "$Venv\Scripts\python.exe"
 Step "Installing hash-checked build dependencies"
 Run uv pip install --quiet --python $Py --require-hashes -r packaging\requirements-windows.txt
-if ($env:OPENCV_WHEEL) {
-    # The minimal OpenCV built from the pinned source release (tools/build_opencv_minimal.sh): the
-    # published wheel bundles FFmpeg (opencv_videoio_ffmpeg), which the app never uses.
-    if (-not ((Split-Path $env:OPENCV_WHEEL -Leaf) -like "opencv_python_headless-*.whl") -or -not (Test-Path $env:OPENCV_WHEEL)) {
-        throw "OPENCV_WHEEL is not an OpenCV wheel: $env:OPENCV_WHEEL"
+if ($OpencvWheel) {
+    if (-not ((Split-Path -Leaf $OpencvWheel) -like "opencv_python_headless-*.whl") -or -not (Test-Path $OpencvWheel)) {
+        throw "OpencvWheel is not an OpenCV wheel: $OpencvWheel"
     }
-    Step "Replacing the published OpenCV with the minimal source build ($(Split-Path $env:OPENCV_WHEEL -Leaf))"
-    Write-Host "    SHA-256 $((Get-FileHash $env:OPENCV_WHEEL -Algorithm SHA256).Hash.ToLower())"
-    Run uv pip install --quiet --python $Py --no-index --no-deps --reinstall $env:OPENCV_WHEEL
+    Step "Replacing the published OpenCV with the minimal source build ($(Split-Path -Leaf $OpencvWheel))"
+    Write-Host ("    " + (Get-FileHash -Algorithm SHA256 $OpencvWheel).Hash.ToLower())
+    Run uv pip install --quiet --python $Py --no-index --no-deps --reinstall $OpencvWheel
+} elseif (-not $AllowPublishedOpencv) {
+    throw "Pass -OpencvWheel with the minimal OpenCV wheel (tools\build_opencv_minimal_windows.py), or -AllowPublishedOpencv for a local test build"
 }
 Run uv pip install --quiet --python $Py --no-deps --reinstall-package eng-drawing-viewer .
 Run $Py -c "import sys; print('    Python', sys.version.split()[0])"
@@ -105,8 +112,16 @@ Run $Py packaging\collect_licenses.py build\legal-notices
 Step "Running PyInstaller"
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
 $env:ENG_VIEWER_TESSDATA = "$Work\tessdata"
-Run $Py -m PyInstaller --noconfirm --clean --log-level WARN --distpath $Dist --workpath "$Work\pyinstaller" packaging\windows\ENG_Drawing_Viewer_win.spec
-Remove-Item Env:\ENG_VIEWER_TESSDATA
+$BuildPath = $env:Path
+try {
+    # PyInstaller searches PATH for DLL imports. Keep unrelated toolchains (e.g. a
+    # third-party ICU build) out; Python and the bundled wheels supply app dependencies.
+    $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+    Run $Py -m PyInstaller --noconfirm --clean --log-level WARN --distpath $Dist --workpath "$Work\pyinstaller" packaging\windows\ENG_Drawing_Viewer_win.spec
+} finally {
+    $env:Path = $BuildPath
+    Remove-Item Env:\ENG_VIEWER_TESSDATA
+}
 Copy-Item "$Work\launcher.exe" "$Dist\ENG Drawing Viewer.exe"
 Copy-Item packaging\windows\READ_ME.txt "$Dist\Read Me.txt"
 Copy-Item LICENSE "$Dist\Licence.txt"

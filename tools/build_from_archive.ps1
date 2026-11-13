@@ -47,6 +47,9 @@ if ($LASTEXITCODE -ne 0) { throw "build_windows.ps1 failed" }
 
 Write-Host "==> Tests"
 $env:PYTHONPATH = Join-Path $PWD "src"
+# The tests default to Qt's offscreen platform, which has no Windows clipboard or font engine: the layer
+# clipboard and welcome-screen layout tests need the real platform plugin (as the CI test step uses).
+if (-not $env:QT_QPA_PLATFORM) { $env:QT_QPA_PLATFORM = "windows" }
 & "$env:BUILD_VENV\Scripts\python.exe" -m pytest -q -p no:cacheprovider
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 Write-Host "==> Built in $PWD\release\windows"
