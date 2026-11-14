@@ -1,0 +1,14 @@
+# Tools to build the minimal OpenCV on Windows (tools/build_opencv_minimal_windows.py). Same as
+# requirements-opencv-build.in, except that the GitHub windows-2025 image ships Visual Studio 2026
+# only: scikit-build 0.18 and CMake 3.31 do not know it, scikit-build 0.19.1 and CMake 4.3.2 do
+# (4.3.2 is the CMake the upstream 5.0.0.93 wheels were built with). Never bundled into the app.
+#   uv pip compile packaging/requirements-opencv-build-windows.in --python-version 3.13 \
+#     --python-platform x86_64-pc-windows-msvc --generate-hashes --no-header \
+#     -o packaging/requirements-opencv-build-windows.txt
+scikit-build==0.19.1
+setuptools==69.5.1
+cmake==4.3.2
+packaging==26.3
+pip==26.2.1
+wheel==0.45.1
+distro==1.9.0

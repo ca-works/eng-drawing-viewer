@@ -1,0 +1,17 @@
+ENG Drawing Viewer, Windows only (tools/build_opencv_minimal_windows.py), after optional-typing-stubs.patch:
+the wheel recipe requires the FFmpeg video I/O plugin DLL on Windows, which the minimal build never makes.
+
+--- a/setup.py
++++ b/setup.py
+@@ -103,9 +103,8 @@
+     # Path regexes with forward slashes relative to CMake install dir.
+     rearrange_cmake_output_data = {
+         "cv2": (
+-            [r"bin/opencv_videoio_ffmpeg\d{3}%s\.dll" % ("_64" if is64 else "")]
+-            if os.name == "nt"
+-            else []
++            # ENG Drawing Viewer: no FFmpeg plugin; the minimal build has no video I/O at all.
++            []
+         )
+         +
+         # In Windows, in python/X.Y/<arch>/; in Linux, in just python/X.Y/.

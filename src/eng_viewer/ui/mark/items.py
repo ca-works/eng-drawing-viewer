@@ -6,6 +6,8 @@ sharp at every zoom level and export resolution. Nothing here touches the PDF.
 from __future__ import annotations
 
 import math
+from datetime import date
+from functools import lru_cache
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen, QTextCursor
@@ -114,6 +116,191 @@ def _pen(color: QColor, width: float, cap=Qt.PenCapStyle.RoundCap) -> QPen:
     pen.setCapStyle(cap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     return pen
+
+
+SYMBOL_TOOLS = ("checkmark", "cross")
+
+
+def symbol_path(kind: str, width: float, height: float) -> QPainterPath:
+    x, y = width / 2, height / 2
+    if kind == "checkmark":
+        path = QPainterPath(QPointF(-x, y * 0.15))
+        path.lineTo(-x * 0.3, y)
+        path.lineTo(x, -y)
+    else:
+        path = QPainterPath(QPointF(-x, -y))
+        path.lineTo(x, y)
+        path.moveTo(x, -y)
+        path.lineTo(-x, y)
+    return path
+
+
+class SymbolItem(AnnotationMixin, QGraphicsItem):
+    def __init__(self, kind: str, color: QColor, size: float, width: float, height: float | None = None):
+        super().__init__()
+        self._init_annotation()
+        self.kind, self.color, self.size, self.width = kind, QColor(color), size, width
+        self.height = size if height is None else height
+        self.setZValue(Z_SHAPES)
+
+    def geom_rect(self) -> QRectF:
+        return QRectF(self.pos() - QPointF(self.size / 2, self.height / 2),
+                      self.pos() + QPointF(self.size / 2, self.height / 2))
+
+    def boundingRect(self) -> QRectF:
+        pad = max(6.0, self.width) / 2 + 1
+        return QRectF(-self.size / 2 - pad, -self.height / 2 - pad,
+                      self.size + 2 * pad, self.height + 2 * pad)
+
+    def shape(self) -> QPainterPath:
+        stroker = QPainterPathStroker(_pen(self.color, max(6.0, self.width)))
+        return stroker.createStroke(symbol_path(self.kind, self.size, self.height))
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(_pen(self.color, self.width))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(symbol_path(self.kind, self.size, self.height))
+        self.paint_chrome(painter, self.boundingRect())
+
+    def style(self) -> dict:
+        return {"color": QColor(self.color), "size": self.size, "width": self.width}
+
+    def set_style(self, style: dict):
+        self.prepareGeometryChange()
+        size = style.get("size", self.size)
+        self.height *= size / self.size
+        self.size = size
+        self.width = style.get("width", self.width)
+        self.color = QColor(style.get("color", self.color))
+        self.update()
+
+    def get_state(self) -> dict:
+        return {**super().get_state(), "size": self.size, "height": self.height}
+
+    def _apply_state(self, state: dict):
+        self.size, self.height = state["size"], state["height"]
+
+    def scaled_state(self, state: dict, old: QRectF, new: QRectF) -> dict:
+        sx, sy = _scales(old, new)
+        return {"pos": map_point(state["pos"], old, new), "size": state["size"] * sx, "height": state["height"] * sy}
+
+    def _extra_dict(self) -> dict:
+        return {"color": _col(self.color), "size": self.size, "width": self.width, "height": self.height}
+
+
+STAMP_TOOLS = ("pass", "fail")
+MIN_STAMP_WIDTH = 54.0
+MIN_STAMP_HEIGHT = 24.0
+STAMP_HEIGHT_RATIO = 0.42
+
+
+def placement_date() -> str:
+    return date.today().strftime("%d/%m/%Y")
+
+
+def stamp_bounds(width, height, show_date):
+    band = min(height * 0.44, width * 0.2) if show_date else 0
+    return QRectF(-width / 2, -height / 2, width, height + band)
+
+
+@lru_cache(maxsize=128)
+def _stamp_lettering(text, bold):
+    font = QFont()
+    font.setBold(bold)
+    font.setPixelSize(100)
+    path = QPainterPath()
+    path.addText(0, 0, font, text)
+    return path
+
+
+def _stamp_text(painter, text, box, bold):
+    path = _stamp_lettering(text, bold)
+    bounds = path.boundingRect()
+    if bounds.isEmpty():
+        return
+    scale = min(box.width() / bounds.width(), box.height() / bounds.height())
+    painter.save()
+    painter.translate(box.center())
+    painter.scale(scale, scale)
+    painter.translate(-bounds.center())
+    painter.drawPath(path)
+    painter.restore()
+
+
+def paint_stamp(painter, kind, width, height, color, opacity, date_text):
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setOpacity(painter.opacity() * opacity)
+    border = stamp_bounds(width, height, False)
+    unit = min(height, width * STAMP_HEIGHT_RATIO)
+    stroke = unit * 0.065
+    radius = unit * 0.18
+    painter.setPen(_pen(color, stroke))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(border.adjusted(stroke / 2, stroke / 2, -stroke / 2, -stroke / 2), radius, radius)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    _stamp_text(painter, kind.upper(), QRectF(-width * 0.36, -height * 0.24, width * 0.72, height * 0.48), True)
+    if date_text:
+        band = stamp_bounds(width, height, True).height() - height
+        _stamp_text(painter, date_text, QRectF(-width * 0.42, height / 2 + band * 0.27, width * 0.84, band * 0.68), False)
+    painter.restore()
+
+
+class StampItem(AnnotationMixin, QGraphicsItem):
+    """An inspection stamp with a fixed local placement date."""
+
+    def __init__(self, kind, color, size, alpha, show_date, placed, height=None):
+        super().__init__()
+        self._init_annotation()
+        self.kind, self.color, self.size = kind, QColor(color), size
+        self.alpha, self.show_date, self.placed = alpha, show_date, placed
+        self.height = max(MIN_STAMP_HEIGHT, size * STAMP_HEIGHT_RATIO) if height is None else height
+        self.setZValue(Z_SHAPES)
+
+    def boundingRect(self):
+        return stamp_bounds(self.size, self.height, self.show_date)
+
+    def geom_rect(self):
+        return self.boundingRect().translated(self.pos())
+
+    def shape(self):
+        path = QPainterPath()
+        path.addRect(self.boundingRect())
+        return path
+
+    def paint(self, painter, option, widget=None):
+        paint_stamp(painter, self.kind, self.size, self.height, self.color, self.alpha,
+                    self.placed if self.show_date else "")
+        self.paint_chrome(painter, self.boundingRect())
+
+    def style(self):
+        return {"color": QColor(self.color), "size": self.size, "alpha": self.alpha, "show_date": self.show_date}
+
+    def set_style(self, style):
+        self.prepareGeometryChange()
+        size = style.get("size", self.size)
+        self.height = max(MIN_STAMP_HEIGHT, self.height * size / self.size)
+        self.size = size
+        self.color = QColor(style.get("color", self.color))
+        self.alpha = style.get("alpha", self.alpha)
+        self.show_date = style.get("show_date", self.show_date)
+        self.update()
+
+    def get_state(self):
+        return {**super().get_state(), "size": self.size, "height": self.height}
+
+    def _apply_state(self, state):
+        self.size, self.height = state["size"], state["height"]
+
+    def scaled_state(self, state, old, new):
+        sx, sy = _scales(old, new)
+        return {"pos": map_point(state["pos"], old, new), "size": max(MIN_STAMP_WIDTH, state["size"] * sx),
+                "height": max(MIN_STAMP_HEIGHT, state["height"] * sy)}
+
+    def _extra_dict(self):
+        return {**self.style(), "color": _col(self.color), "placed": self.placed, "height": self.height}
 
 
 class StrokeItem(AnnotationMixin, QGraphicsItem):
@@ -495,15 +682,19 @@ class GhostItem(QGraphicsItem):
         self._num_path = QPainterPath()
 
     def configure(self, tool: str, color: QColor, size: float, alpha: float = 1.0, number: int = 1,
-                  fill: bool = False, screen_px: float = 0.0):
+                  fill: bool = False, screen_px: float = 0.0, width: float = 2.0, show_date: bool = False):
         self.prepareGeometryChange()
         self.tool, self.color, self.size, self.alpha = tool, QColor(color), float(size), alpha
         self.number, self.fill, self.screen_px = number, fill, screen_px
+        self.width = width
+        self.show_date = show_date
         if tool == "bubble":
             self._num_path = number_path(number, size, self.font_family)
         self.update()
 
     def _extent(self) -> float:
+        if self.tool in STAMP_TOOLS:
+            return self.size + 2
         if self.tool == "bubble":
             return self.size / 2 + BubbleItem.stroke_for(self.size) + 2
         if self.tool == "text":
@@ -530,6 +721,13 @@ class GhostItem(QGraphicsItem):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#000000"))
             painter.drawPath(self._num_path)
+        elif t in STAMP_TOOLS:
+            paint_stamp(painter, t, self.size, max(MIN_STAMP_HEIGHT, self.size * STAMP_HEIGHT_RATIO),
+                        self.color, self.alpha * 0.65, placement_date() if self.show_date else "")
+        elif t in SYMBOL_TOOLS:
+            painter.setOpacity(0.55)
+            painter.setPen(_pen(self.color, self.width))
+            painter.drawPath(symbol_path(t, self.size, self.size))
         elif t in ("pen", "highlighter"):
             c = QColor(self.color)
             c.setAlphaF(0.35 if t == "pen" else min(0.5, self.alpha))
@@ -706,6 +904,10 @@ def item_from_dict(d: dict, font_family: str = ""):
         it = StrokeItem(QColor(d["color"]), d["width"], bool(d.get("highlighter")), d.get("alpha", 1.0))
         it.points = [_unpt(p) for p in d["points"]]
         it._rebuild()
+    elif t in STAMP_TOOLS:
+        it = StampItem(t, QColor(d["color"]), d["size"], d["alpha"], d["show_date"], d["placed"], d.get("height"))
+    elif t in SYMBOL_TOOLS:
+        it = SymbolItem(t, QColor(d["color"]), d["size"], d["width"], d.get("height"))
     elif t == "arrow":
         it = ArrowItem(_unpt(d["p1"]), _unpt(d["p2"]), QColor(d["color"]), d["width"])
     elif t == "circle":

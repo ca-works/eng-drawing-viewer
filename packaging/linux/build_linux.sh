@@ -17,9 +17,12 @@
 #   APPIMAGE_RUNTIME=path       use this runtime file instead of downloading the pinned release
 #   APPIMAGE_RUNTIME_SHA256=…   require this runtime hash (default: the pinned release's)
 #   SKIP_APPIMAGE=1             stop after the AppDir (no runtime needed)
-#   OPENCV_WHEEL=path           replace the published OpenCV with the minimal source build
-#                               (tools/build_opencv_minimal.sh). Release builds use it: the published
-#                               wheel bundles FFmpeg and OpenSSL 1.1.1, which the app never uses.
+#   OPENCV_WHEEL=path           the minimal OpenCV wheel from tools/build_opencv_minimal.sh (built from
+#                               the source release pinned in packaging/requirements-linux.txt). Release
+#                               builds need it: the published wheel bundles FFmpeg, OpenSSL 1.1.1k and
+#                               OpenBLAS/libgfortran, none of which the app uses.
+#   ALLOW_PUBLISHED_OPENCV=1    build with the published OpenCV wheel anyway (local testing only; the
+#                               bundle check then reports FFmpeg and OpenSSL as findings)
 #
 # Output in release/linux/:
 #   ENG-Drawing-Viewer-<version>-Linux-x86_64.AppImage
@@ -93,6 +96,9 @@ if [[ -n "${OPENCV_WHEEL:-}" ]]; then
   step "Replacing the published OpenCV with the minimal source build ($(basename "$OPENCV_WHEEL"))"
   sha256sum "$OPENCV_WHEEL" | sed 's/^/    /'
   uv pip install --quiet --python "$PY" --no-index --no-deps --reinstall "$OPENCV_WHEEL"
+elif [[ "${ALLOW_PUBLISHED_OPENCV:-0}" != "1" ]]; then
+  echo "Set OPENCV_WHEEL to the minimal OpenCV wheel (tools/build_opencv_minimal.sh), or ALLOW_PUBLISHED_OPENCV=1 for a local test build." >&2
+  exit 1
 fi
 uv pip install --quiet --python "$PY" --no-deps --no-build-isolation --reinstall-package eng-drawing-viewer .
 "$PY" -c 'import sys; print("    Python", sys.version.split()[0])'
@@ -222,10 +228,17 @@ report = {
     # A build from the source archive has no git: SOURCE_COMMIT names the commit it was exported from.
     "source_commit": os.environ.get("SOURCE_COMMIT") or (shutil.which("git") and subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()) or None,
+    # Archive builds also have SOURCE_MANIFEST.txt, which identifies the exported source.
+    "source_manifest_sha256": (hashlib.sha256(open("SOURCE_MANIFEST.txt", "rb").read()).hexdigest()
+                               if os.path.exists("SOURCE_MANIFEST.txt") else None),
     "build_glibc": platform.libc_ver()[1],
     "minimum_glibc": json.load(open(check)).get("glibc_required"),
     "appimage_runtime": {"release": tag, "sha256": runtime_sha},
     "python": sys.version.split()[0],
+    "opencv_wheel": ({"file": os.path.basename(os.environ["OPENCV_WHEEL"]),
+                      "sha256": hashlib.sha256(open(os.environ["OPENCV_WHEEL"], "rb").read()).hexdigest(),
+                      "recipe": "tools/build_opencv_minimal.sh"}
+                     if os.environ.get("OPENCV_WHEEL") else "published wheel (test build only)"),
 }
 json.dump(report, open(os.path.join(out, "build-report.json"), "w"), indent=2)
 print(json.dumps(report, indent=2))

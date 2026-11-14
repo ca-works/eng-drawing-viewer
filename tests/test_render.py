@@ -91,13 +91,18 @@ def test_export_scale_caps_huge_pages():
     assert reinforced_min_line(220 / 72) == pytest.approx(0.9 * 220 / 72)
 
 
-def test_cancelled_jobs_never_call_back(qtbot, render, corpus):
+def test_cancelled_jobs_never_call_back(qtbot, render, corpus, monkeypatch):
     called = []
+    # Hold the dispatcher while the jobs are queued and withdrawn. Otherwise a slow machine can finish
+    # the first few before cancel_group runs, and a result that existed before the cancel is delivered.
+    monkeypatch.setattr(render, "_assign_locked", lambda: None)
     ids = [render.submit("render", {"path": str(corpus["a0"]), "page": 0, "scale": 0.2 + i * 0.01}, called.append,
                          priority=PRI_PREFETCH, group=("test-cancel",)) for i in range(20)]
     render.cancel_group(("test-cancel",))
+    monkeypatch.delattr(render, "_assign_locked")  # back to the real dispatcher
+    render._wake()
     qtbot.wait(1500)
-    # Jobs already running may finish but are not delivered.
+    # Nothing was started before the cancel, and withdrawn jobs are dropped, not rendered or delivered.
     assert called == []
     assert len(ids) == 20
 

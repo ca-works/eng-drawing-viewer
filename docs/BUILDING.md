@@ -102,8 +102,14 @@ runs on Linux too (with `llvm-lipo`), which is how steps 1 and 2 were first veri
 Needs Windows 10/11 x64, [uv](https://docs.astral.sh/uv/), [Go](https://go.dev/dl/) 1.26 or later
 for the launcher, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the optional installer.
 
+Release builds use the minimal OpenCV (core, imgproc, photo; no FFmpeg, OpenSSL or OpenCL) built
+from the source release pinned in the Windows lock. It needs the Visual Studio 2022 or 2026 C++ build
+tools and git:
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1            # -Installer for Setup.exe
+uv python install 3.13.16
+python tools\build_opencv_minimal_windows.py (uv python find 3.13.16) packaging\requirements-windows.txt build\opencv-wheel
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1 -OpencvWheel (Resolve-Path build\opencv-wheel\opencv_python_headless-*.whl)   # -Installer for Setup.exe
 ```
 
 For a release, first build the minimal OpenCV in Git Bash with Visual Studio's C++ build tools
@@ -111,6 +117,11 @@ For a release, first build the minimal OpenCV in Git Bash with Visual Studio's C
 <python.exe> packaging/requirements-windows.txt build/opencv`) and set `OPENCV_WHEEL` to the wheel
 before running the script; the published wheel bundles FFmpeg (`opencv_videoio_ffmpeg`). The
 `editions` workflow does both.
+`build_opencv_minimal_windows.py` reads its CMake options from `tools/build_opencv_minimal.sh`, so
+every edition is configured identically, and uses `packaging/requirements-opencv-build-windows.txt`
+(scikit-build 0.19.1 and CMake 4.3.2, which know Visual Studio 2026). Without `-OpencvWheel` the
+build stops unless `-AllowPublishedOpencv` is given (local tests only: the published wheel carries
+FFmpeg's `opencv_videoio_ffmpeg500_64.dll`, which the bundle check reports).
 
 The script creates `.venv-build` with CPython 3.13.16, installs the Windows lock, downloads the
 Tesseract language data (hash-checked), builds the launcher (Go, no third-party modules, `-trimpath`),
@@ -138,7 +149,10 @@ sudo apt-get install binutils squashfs-tools gpgv gnupg desktop-file-utils xvfb 
   libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
   libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-xfixes0 libxcb-util1 libzstd1 \
   libwayland-client0 libwayland-cursor0 libwayland-egl1
-packaging/linux/build_linux.sh            # RUN_TESTS=1 also runs the tests; SKIP_APPIMAGE=1 stops at the AppDir
+uv python install 3.13.16
+packaging/linux/build_opencv_linux.sh "$(uv python find 3.13.16)" build/opencv-wheel
+OPENCV_WHEEL="$(ls "$PWD"/build/opencv-wheel/opencv_python_headless-*.whl)" \
+  packaging/linux/build_linux.sh          # RUN_TESTS=1 also runs the tests; SKIP_APPIMAGE=1 stops at the AppDir
 ```
 
 Release builds use the minimal OpenCV (core, imgproc, photo) instead of the published wheel, which
@@ -158,6 +172,14 @@ Neither system needs to be a real machine: the 2.3.0 AppImage was built on an Ap
 free Lima VM, with Ubuntu's official `ubuntu-base` 22.04 and Rocky's official container root
 filesystem as x86-64 chroots run by Rosetta 2. A build from the source archive has no git; set
 `SOURCE_COMMIT` to record the commit in `build-report.json`.
+`build_opencv_linux.sh` runs the shared minimal-OpenCV recipe (`tools/build_opencv_minimal.sh`) with
+the Linux lock. Linux additions: no RPATH (CMake would record the temporary build tree), and
+`packaging/opencv/glibc-2.34-compat.h`, which keeps two symbols (`hypotf`, `std::condition_variable::wait`)
+at their original versions so the wheel still loads on glibc 2.34 with GCC 11's libstdc++ (RHEL/Rocky
+9). It fails if the wheel needs anything newer or links anything but the C/C++ runtime. Without
+`OPENCV_WHEEL`, `build_linux.sh` stops unless `ALLOW_PUBLISHED_OPENCV=1` (local tests only: the
+published wheel carries FFmpeg, OpenSSL 1.1.1k and OpenBLAS). `tools/build_from_archive_linux.sh`
+builds the same from a published source archive.
 
 The script installs the Linux lock, fetches the Tesseract data, runs PyInstaller
 (`packaging/linux/ENG_Drawing_Viewer_linux.spec`), assembles an AppDir (`AppRun`, desktop entry,
@@ -173,6 +195,16 @@ one every desktop provides (graphics drivers, C/C++ runtimes, X11/Wayland, fontc
 Today that keeps seven (the libxcb helpers Qt's X11 plugin needs, and libzstd); every bundled binary
 needs at most glibc 2.34. The licence collector attributes each of them to its Ubuntu package and
 ships that package's copyright file.
+
+## CI: the `build` workflow (Windows and Linux 2.3.0 candidates)
+
+`.github/workflows/build.yml` (manual only; no macOS job) builds the minimal OpenCV and then the
+Windows ZIP and the Linux AppImage from the exported source archive, runs the tests with
+`ENG_REQUIRE_MINIMAL_OPENCV=1`, smoke-tests the packaged apps (Windows: no Python on the PATH,
+outbound traffic blocked, DLL origins, scripted UI pass; Linux: FUSE, extract-and-run, inside a network
+namespace without network, then Debian 12, Ubuntu 24.04, Fedora 42 and Rocky Linux 9). Results are
+private 7-day artifacts. It is named `build.yml` because GitHub starts a workflow by hand only if a
+file of that name is on the default branch.
 
 ## CI: the `editions` workflow
 

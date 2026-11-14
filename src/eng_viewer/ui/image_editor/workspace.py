@@ -211,6 +211,10 @@ class ImageWorkspace(QWidget):
         return self.state.doc if self.state else None
 
     @property
+    def active_layer(self):
+        return self.doc.active_layer if self.doc and self._job is None else None
+
+    @property
     def selection(self):
         return self.state.selection if self.state else None
 
@@ -450,12 +454,12 @@ class ImageWorkspace(QWidget):
         self.fill_new_layer = QCheckBox("Fill on a new layer")
         self.fill_new_layer.setToolTip("Put the fill on its own layer above, leaving the active layer's pixels unchanged")
         ml.addWidget(self.fill_new_layer)
-        self.auto_background = secondary_button("Remove background automatically", "magic-eraser")
+        self.auto_background = secondary_button("Remove Background", "magic-eraser")
         self.auto_background.setToolTip("Finds the subject and hides everything around it through the layer mask. "
                                         "Works offline, no model needed.")
         self.auto_background.clicked.connect(self.remove_background)
-        ml.addWidget(self.auto_background)
         sl.addWidget(self.magic_panel)
+        sl.addWidget(self.auto_background)
         ai = self._menu_button("Offline subject selection", [("Choose offline model package…", self.choose_model),
             ("Select subject", lambda: self.run_model(False)), ("Remove background to mask", lambda: self.run_model(True)),
             ("Remove background automatically (no model)", self.remove_background),
@@ -479,9 +483,9 @@ class ImageWorkspace(QWidget):
         add = tool_button("plus", "Add transparent layer", size=26)
         add.clicked.connect(self.add_layer)
         layer_heading.addWidget(add)
-        delete = tool_button("trash", "Delete layer", size=26, icon_size=16)
-        delete.clicked.connect(self.remove_layer)
-        layer_heading.addWidget(delete)
+        self.delete_layer_button = tool_button("trash", "Delete layer", size=26, icon_size=16)
+        self.delete_layer_button.clicked.connect(self.remove_layer)
+        layer_heading.addWidget(self.delete_layer_button)
         layer_more = self._menu_button("", [("Rename layer…", self.rename_layer), ("Duplicate layer", self.duplicate_layer),
             ("Scale layer…", self.scale_layer), ("Add white mask", self.add_mask),
             ("Remove mask", self.remove_mask), ("Mask from selection", self.selection_to_mask)], icon_name="more",
@@ -610,6 +614,12 @@ class ImageWorkspace(QWidget):
             widget.setEnabled(ready)
         self.undo_button.setEnabled(ready and self.doc.can_undo)
         self.redo_button.setEnabled(ready and self.doc.can_redo)
+        layer = self.active_layer
+        self.auto_background.setEnabled(layer is not None and not layer.locked)
+        self.delete_layer_button.setEnabled(layer is not None and not layer.locked)
+        self.copy_button.setEnabled(layer is not None)
+        for widget in (self.layer_opacity, self.blend, self.locked):
+            widget.setEnabled(layer is not None)
         self.canvas.busy = not ready
         self.tabs.setEnabled(self._job is None)
         for button in self.tool_buttons.values():
@@ -696,7 +706,7 @@ class ImageWorkspace(QWidget):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
                 item.setCheckState(Qt.CheckState.Checked if layer.visible else Qt.CheckState.Unchecked)
                 self.layers.addItem(item)
-            self.layers.setCurrentRow(len(self.doc.layers) - 1 - self.doc.active_index)
+            self.layers.setCurrentRow(len(self.doc.layers) - 1 - self.doc.active_index if self.doc.layers else -1)
             self._show_active_layer()
             self.tabs.setTabText(self.tabs.currentIndex(), self.state.name + (" •" if self.doc.dirty else ""))
             self.status.setText(f"{self.doc.width:,} × {self.doc.height:,} px · {self.doc.dpi:g} DPI · {len(self.doc.layers)} layers · "
@@ -729,6 +739,12 @@ class ImageWorkspace(QWidget):
     def _show_active_layer(self):
         """Mirror the active layer in the inspector, the Move tool's fields and the canvas frame."""
         layer = self.doc.active_layer
+        if layer is None:
+            self.canvas.set_layer_frame(None, False)
+            for field in self.transform_fields.values():
+                field.setEnabled(False)
+            self.placement_bar.hide()
+            return
         refreshing, self._refreshing = self._refreshing, True
         try:
             self.layer_opacity.setValue(round(layer.opacity * 100))
@@ -784,7 +800,7 @@ class ImageWorkspace(QWidget):
         self.tabs.setCurrentIndex(index)
         self.tabs.blockSignals(False)
         self._clone_source = None
-        self.canvas.crop_rect = None
+        self.canvas.reset_gesture()
         self.refresh(image, fit=True)
 
     def open_image(self, image, name="Untitled"):
@@ -816,8 +832,9 @@ class ImageWorkspace(QWidget):
     def _tab_changed(self, _):
         if self._refreshing or self._job:
             return
-        self._clone_source = None
-        self.canvas.crop_rect = None
+        self._clone_source = self._preview_cache = None
+        self.canvas.reset_gesture()
+        self.placement_bar.hide()
         self.refresh(fit=True)
 
     def close_tab(self, index):
@@ -833,13 +850,16 @@ class ImageWorkspace(QWidget):
                 self.tabs.setCurrentIndex(index)
                 if not self.save_project(synchronous=True):
                     return False
+        closing_current = self.state is state
         self.tabs.blockSignals(True)
         self.states.pop(index)
         self.tabs.removeTab(index)
         self.tabs.blockSignals(False)
         if self.doc:
-            self.refresh(fit=True)
+            if closing_current:
+                self._tab_changed(self.tabs.currentIndex())
         else:
+            self._composite = self._clone_source = self._preview_cache = None
             self.canvas.clear_image()
             self.layers.clear()
             self.placement_bar.hide()
@@ -911,7 +931,6 @@ class ImageWorkspace(QWidget):
         self.stop_edges.setVisible(tool == "magic")
         self.sample_all.setVisible(tool in ("bucket", "wand"))
         self.fill_new_layer.setVisible(tool == "bucket")
-        self.auto_background.setVisible(tool == "magic")
         self.color_button.setVisible(tool in ("pen", "highlighter", "text", "bubble", "shape", "circle", "arrow", "bucket"))
         self.selection_mode.setVisible(selection)
         self.crop_panel.setVisible(tool == "crop")
@@ -982,7 +1001,10 @@ class ImageWorkspace(QWidget):
     def on_gesture(self, tool, points, mods):
         if not self.doc or self._job:
             return
-        doc, layer = self.doc, self.doc.active_layer
+        doc, layer = self.doc, self.active_layer
+        if layer is None:
+            self.status.setText("Add, paste, or import a layer to edit it.")
+            return
         mode = self._selection_mode(mods)
         radius, hardness, opacity = self.size.value() / 2, self.hardness.value() / 100, self.opacity.value() / 100
         tolerance = self.tolerance.value()
@@ -1104,7 +1126,7 @@ class ImageWorkspace(QWidget):
         elif action == "locked":
             self.status.setText("The active layer is locked. Unlock it in the Layers panel to move or transform it.")
         elif action == "delete":
-            if self.selection is None and self.canvas.tool == "move" and self.doc and len(self.doc.layers) > 1:
+            if self.selection is None and self.canvas.tool == "move" and self.active_layer is not None:
                 self.remove_layer()
             else:
                 self.delete_selection()
@@ -1152,6 +1174,7 @@ class ImageWorkspace(QWidget):
             return
         self.doc.active_index = len(self.doc.layers) - row - 1
         self._show_active_layer()
+        self._update_enabled()
         self._clone_source = None
 
     def _layer_changed(self, item):
@@ -1161,16 +1184,16 @@ class ImageWorkspace(QWidget):
             self.mutate("Layer visibility", lambda d: setattr(d.layers[index], "visible", visible))
 
     def change_layer_opacity(self):
-        if not self._refreshing and self.doc:
+        if not self._refreshing and self.active_layer is not None:
             value = self.layer_opacity.value() / 100
             self.mutate("Layer opacity", lambda d: setattr(d.active_layer, "opacity", value))
 
     def change_blend(self, value):
-        if not self._refreshing and self.doc and value in BLEND_MODES:
+        if not self._refreshing and self.active_layer is not None and value in BLEND_MODES:
             self.mutate("Layer blend", lambda d: setattr(d.active_layer, "blend", value))
 
     def change_locked(self, value):
-        if not self._refreshing and self.doc:
+        if not self._refreshing and self.active_layer is not None:
             self.mutate("Layer lock", lambda d: setattr(d.active_layer, "locked", value))
 
     def add_layer(self):
@@ -1187,7 +1210,7 @@ class ImageWorkspace(QWidget):
 
     def duplicate_layer(self):
         """⌘J: a copy of the selected pixels as a new layer, or of the whole layer without a selection."""
-        if not self.doc:
+        if self.active_layer is None:
             return
         selection = self.selection
         if selection is None:
@@ -1202,7 +1225,7 @@ class ImageWorkspace(QWidget):
         self.mutate("Layer via copy", apply, snapshot=False)
 
     def layer_via_cut(self):
-        if not self.doc:
+        if self.active_layer is None:
             return
         selection = self.selection
         if selection is None:
@@ -1220,11 +1243,11 @@ class ImageWorkspace(QWidget):
         self.mutate("Layer via cut", apply, snapshot=False)
 
     def remove_layer(self):
-        if self.doc:
+        if self.active_layer is not None:
             self.mutate("Delete layer", lambda d: d.remove_layer(d.active_index), snapshot=False)
 
     def merge_down(self):
-        if not self.doc or self.doc.active_index == 0:
+        if self.active_layer is None or self.doc.active_index <= 0:
             self.status.setText("There is no layer below to merge into.")
             return
         def apply(d):
@@ -1246,18 +1269,18 @@ class ImageWorkspace(QWidget):
         self.mutate("Merge down", apply, snapshot=False)
 
     def reorder_layer(self, delta):
-        if self.doc:
+        if self.active_layer is not None:
             self.mutate("Reorder layer", lambda d: d.move_layer(d.active_index, max(0, min(len(d.layers) - 1, d.active_index + delta))), snapshot=False)
 
     def rename_layer(self):
-        if not self.doc:
+        if self.active_layer is None:
             return
         name, ok = QInputDialog.getText(self, "Rename layer", "Name", text=self.doc.active_layer.name)
         if ok and name:
             self.mutate("Rename layer", lambda d: setattr(d.active_layer, "name", name))
 
     def edit_layer(self):
-        if not self.doc:
+        if self.active_layer is None:
             return
         layer = self.doc.active_layer
         if layer.locked:
@@ -1315,11 +1338,11 @@ class ImageWorkspace(QWidget):
                         after=self._check_placement)
 
     def add_mask(self):
-        if self.doc and not self.doc.active_layer.locked:
+        if self.active_layer is not None and not self.active_layer.locked:
             self.mutate("Add mask", lambda d: setattr(d.active_layer, "mask", Image.new("L", d.active_layer.image.size, 255)))
 
     def remove_mask(self):
-        if self.doc and not self.doc.active_layer.locked:
+        if self.active_layer is not None and not self.active_layer.locked:
             self.mutate("Remove mask", lambda d: setattr(d.active_layer, "mask", None))
 
     def select_all(self):
@@ -1345,9 +1368,9 @@ class ImageWorkspace(QWidget):
             self.run("Refining selection", lambda: T.refine_selection(mask, feather, grow, smooth), self.set_selection)
 
     def _layer_selection(self):
-        if self.selection is None or not self.doc:
+        if self.selection is None or self.active_layer is None:
             return None
-        l = self.doc.active_layer
+        l = self.active_layer
         return self.selection.crop((l.x, l.y, l.x + l.image.width, l.y + l.image.height))
 
     def selection_to_mask(self):
@@ -1356,7 +1379,7 @@ class ImageWorkspace(QWidget):
             self.mutate("Selection to mask", lambda d: setattr(d.active_layer, "mask", mask))
 
     def mask_to_selection(self):
-        if self.doc and self.doc.active_layer.mask:
+        if self.active_layer is not None and self.active_layer.mask:
             layer = self.doc.active_layer
             mask = Image.new("L", self.doc.size)
             mask.paste(layer.mask, (layer.x, layer.y))
@@ -1405,7 +1428,7 @@ class ImageWorkspace(QWidget):
                 self.model_label.setText(self._model.pack.name + " · local " + value)
 
     def run_model(self, remove):
-        if not self.doc:
+        if self.active_layer is None:
             return
         if self._model is None:
             self.choose_model()
@@ -1471,6 +1494,8 @@ class ImageWorkspace(QWidget):
         doc, selection = self.doc, self.selection
         index = doc.active_index
         options = self._clipboard_options()
+        if self.active_layer is None and (cut or not merged):
+            return False
         if cut and doc.active_layer.locked:
             self.status.setText("Unlock the active layer before cutting from it.")
             return False
@@ -1534,6 +1559,9 @@ class ImageWorkspace(QWidget):
         if content.layers:
             source = ImageDocument.from_bytes(content.layers)
             layers = source.layers
+            if not layers:
+                self.status.setText("The clipboard project has no layers to paste.")
+                return
             same_canvas = self.doc is not None and source.size == self.doc.size
         else:
             source = None
@@ -1598,6 +1626,7 @@ class ImageWorkspace(QWidget):
     def _check_placement(self):
         layer = self.doc.active_layer if self.doc else None
         if layer is None:
+            self.placement_bar.hide()
             return
         cx, cy, w, h, _ = layer.frame
         if abs(w) > self.doc.width + 0.5 or abs(h) > self.doc.height + 0.5:
@@ -1630,7 +1659,7 @@ class ImageWorkspace(QWidget):
 
     # ------------------------------------------------------ layer transforms
     def _active_editable(self):
-        if not self.doc:
+        if self.active_layer is None:
             return False
         if self.doc.active_layer.locked:
             self.status.setText("Unlock the active layer first.")
@@ -1679,7 +1708,7 @@ class ImageWorkspace(QWidget):
 
     def _layer_preview(self):
         doc = self.doc
-        if doc is None:
+        if self.active_layer is None:
             return None
         index = doc.active_index
         key = (id(doc), doc.revision, index, tuple((id(l.image), id(l.mask), l.visible, l.opacity, l.x, l.y) for l in doc.layers))
@@ -1848,6 +1877,27 @@ class ImageWorkspace(QWidget):
         self.owner.add_marked_page(self.doc.source_path or self.state.name, 0, to_qimage(self._composite), text, len(comments))
         self.status.setText("Added image and editable numbered comments to the PowerPoint queue.")
 
+    def send_to_iwork(self, app):
+        if self.doc is None or self._job is not None:
+            return
+        from ..queue_panel import QueueEntry
+
+        image, selection = self._composite, self.selection
+        source = self.doc.source_path or self.state.name
+
+        def prepare():
+            if selection is None:
+                return to_qimage(image)
+            selected = image.copy()
+            selected.putalpha(ImageChops.multiply(image.getchannel("A"), selection))
+            bounds = selected.getbbox()
+            if bounds is None:
+                raise ValueError("The selection contains no visible image.")
+            return to_qimage(selected.crop(bounds))
+
+        self.run("Preparing image", prepare,
+                 lambda result: self.owner.export_iwork(app, [QueueEntry(source, 0, marked_image=result)]))
+
     def export_image(self):
         if self.doc:
             dialog = ExportDialog(self.doc, self)
@@ -1871,7 +1921,7 @@ class ImageWorkspace(QWidget):
                      lambda outputs: self.status.setText(f"Saved {len(outputs)} new images. Originals preserved."))
 
     def remove_background(self):
-        if not self.doc:
+        if self.active_layer is None:
             return
         layer = self.doc.active_layer
         if layer.locked:

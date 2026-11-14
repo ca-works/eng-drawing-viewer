@@ -17,8 +17,10 @@ class FullPageRender(QObject):
     failed = Signal(str)
 
     def __init__(self, service: RenderService, path: str, page: int, page_w: float, page_h: float,
-                 dpi: float, reinforce: bool = True, priority: int = PRI_EXPORT, parent=None, native: bool = False):
+                 dpi: float, reinforce: bool = True, priority: int = PRI_EXPORT, parent=None, native: bool = False,
+                 *, preserve_image_alpha: bool = False):
         super().__init__(parent)
+        self.preserve_image_alpha = preserve_image_alpha
         self.native = native  # image documents render at their own pixel size
         self.service = service
         self.scale = export_scale(dpi, page_w, page_h)
@@ -41,7 +43,7 @@ class FullPageRender(QObject):
             # One band: the worker picks the image's own scale (images are never banded).
             self._expected = 1
             args = {"path": self.path, "page": self.page, "scale": self.scale, "native_image": True,
-                    "max_pixels": 200_000_000}
+                    "max_pixels": 200_000_000, "preserve_image_alpha": self.preserve_image_alpha}
             self._jobs.append(self.service.submit("render", args, self._on_part, priority=self.priority,
                                                   group=self.group, image_format="rgb888", dedupe=False))
             return

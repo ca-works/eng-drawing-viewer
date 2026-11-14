@@ -115,6 +115,10 @@ app = BUNDLE(
         "LSMinimumSystemVersion": "14.4",  # Qt 6.12 needs 14.4; tested on 14.8, 15.7, 26.6 and 27
         "LSApplicationCategoryType": "public.app-category.productivity",
         "NSHighResolutionCapable": True,
+        "NSAppleEventsUsageDescription": (
+            "ENG Drawing Viewer uses Apple Events to preview a temporary copy of a Pages, Numbers, "
+            "or Keynote document and to insert drawings into Keynote when you choose that action."
+        ),
         "NSRequiresAquaSystemAppearance": False,
         "NSSupportsAutomaticGraphicsSwitching": True,
         "NSHumanReadableCopyright": "Copyright © 2026 ca-works. Free software under the GNU AGPL v3 or later.",

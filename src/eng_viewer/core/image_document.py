@@ -317,7 +317,7 @@ class _State:
 class ImageDocument:
     width: int
     height: int
-    layers: list[ImageLayer] = field(default_factory=list)
+    layers: list[ImageLayer] | None = None
     dpi: float = 96
     source_path: str = ""
     metadata: dict = field(default_factory=dict)
@@ -333,10 +333,10 @@ class ImageDocument:
     def __post_init__(self):
         _dimensions(self.width, self.height)
         _number(self.dpi, "DPI", 1, 100000)
+        if self.layers is None:
+            self.layers = [ImageLayer("Background", Image.new("RGBA", self.size))]
         if len(self.layers) > MAX_LAYERS:
             raise ValueError("Documents support at most 64 layers.")
-        if not self.layers:
-            self.layers = [ImageLayer("Background", Image.new("RGBA", self.size))]
         self.active_index = min(max(0, self.active_index), len(self.layers) - 1)
 
     @property
@@ -345,7 +345,7 @@ class ImageDocument:
 
     @property
     def active_layer(self):
-        return self.layers[self.active_index]
+        return self.layers[self.active_index] if self.layers else None
 
     @property
     def can_undo(self):
@@ -742,8 +742,8 @@ class ImageDocument:
             raise ValueError("Unlock the layer before deleting it.")
         self.snapshot("Delete layer")
         self.layers.pop(index)
-        if not self.layers:
-            self.layers.append(ImageLayer("Background", Image.new("RGBA", self.size)))
+        if index < self.active_index:
+            self.active_index -= 1
         self.active_index = min(self.active_index, len(self.layers) - 1)
         self.touch()
 
@@ -816,9 +816,9 @@ class ImageDocument:
     def _manifest(self):
         _dimensions(self.width, self.height)
         _number(self.dpi, "DPI", 1, 100000)
-        if not 1 <= len(self.layers) <= MAX_LAYERS or len({layer.id for layer in self.layers}) != len(self.layers):
+        if len(self.layers) > MAX_LAYERS or len({layer.id for layer in self.layers}) != len(self.layers):
             raise ValueError("The project must contain 1–64 layers with unique IDs.")
-        if type(self.active_index) is not int or not 0 <= self.active_index < len(self.layers):
+        if type(self.active_index) is not int or not min(0, len(self.layers) - 1) <= self.active_index < len(self.layers):
             raise ValueError("Invalid active layer.")
         for layer in self.layers:
             replace(layer)  # Validate fields changed by editing operations.
@@ -893,7 +893,7 @@ class ImageDocument:
         _dimensions(data.get("width"), data.get("height"))
         dpi = _number(data.get("dpi", 96), "DPI", 1, 100000)
         records = data.get("layers")
-        if not isinstance(records, list) or not 1 <= len(records) <= MAX_LAYERS:
+        if not isinstance(records, list) or len(records) > MAX_LAYERS:
             raise ValueError("Invalid project layers.")
         expected = {"manifest.json"}
         layers, ids, total_pixels = [], set(), 0
@@ -939,7 +939,7 @@ class ImageDocument:
         if set(names) != expected:
             raise ValueError("Project contains missing or unrecognized assets.")
         active = data.get("active_index", 0)
-        if type(active) is not int or not 0 <= active < len(layers):
+        if type(active) is not int or not min(0, len(layers) - 1) <= active < len(layers):
             raise ValueError("Invalid active layer.")
         return cls(data["width"], data["height"], layers, dpi=dpi,
                    metadata=_unpack_metadata(data.get("metadata", {})), active_index=active)
