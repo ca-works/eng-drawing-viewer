@@ -38,7 +38,7 @@ def send_menu(parent_menu, send, *, apps=("Keynote", "Pages", "Numbers"), suitab
             if url is None:
                 action.setToolTip(f"Install {name} to send files to it.")
             elif not usable and name == "Numbers":
-                action.setToolTip("Send a CSV or TSV reference to Numbers from Standards.")
+                action.setToolTip("Send a CSV or TSV reference to Numbers from Reference.")
             else:
                 action.setToolTip(f"Send to {name}")
 

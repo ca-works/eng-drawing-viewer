@@ -2,27 +2,28 @@
 from __future__ import annotations
 
 import tempfile
+from hashlib import sha256
 from itertools import islice
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import QFileInfo, QObject, QPointF, QRectF, QSize, Qt, QThreadPool, QTimer, QEvent, Signal
-from PySide6.QtGui import QColor, QCursor, QIcon, QPen, QUndoStack
+from PySide6.QtCore import QFileInfo, QObject, QSize, Qt, QThreadPool, QTimer, QEvent, Signal
+from PySide6.QtGui import QColor, QDoubleValidator, QIcon, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QColorDialog, QDockWidget, QDoubleSpinBox, QFileDialog, QFileIconProvider,
-    QGraphicsItem, QGraphicsRectItem, QHBoxLayout, QLabel, QLineEdit, QMenu, QSpinBox, QStackedWidget,
+    QApplication, QColorDialog, QDockWidget, QFileDialog, QFileIconProvider,
+    QHBoxLayout, QLabel, QLineEdit, QMenu, QStackedWidget,
     QTabWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
+from ..core.config import Settings
 from ..core.render_service import PRI_EXPORT, PRI_PREVIEW
 from ..core.reference_text import TABLE_EXTS
 from ..core.standards import IWORK_EXTS, OPEN_EXTS, STANDARDS_EXTS, scan_folder
 from . import icons
 from .image_editor.common import Job
-from .mark.commands import AddItems, RemoveItems
-from .mark.items import StrokeItem
 from .mark.tool_options import RANGES, ToolSettings
-from .page_view import PageRef, PageView
+from .page_view import PageRef
+from .reference_view import ContinuousReferenceView
 from .widgets import ElidedLabel, primary_button, tool_button
 
 RIGHT = Qt.DockWidgetArea.RightDockWidgetArea
@@ -44,147 +45,28 @@ def button(layout, icon, tooltip, slot, checkable=False):
     return control
 
 
-class ReferenceCanvas(PageView):
-    """Page coordinates and vector strokes shared with MARK, with page-local undo."""
-
-    historyChanged = Signal(bool, bool)
-
-    def __init__(self, render, settings):
-        self.mode = "pan"
-        super().__init__(render)
-        self.settings = settings
-        self.left_drag_pans = True
-        self.pages = {}
-        self.active = None
-        self.stroke = None
-
-    def set_page(self, ref, placeholder=None, keep_view=False):
-        if self.stroke is not None:
-            self.detach_items([self.stroke])
-            self.stroke = None
-        if self.active is not None:
-            self.active[0].hide()
-        self.active = self.pages.get(ref.page) if ref else None
-        if self.active is not None:
-            self.active[0].show()
-        super().set_page(ref, placeholder, keep_view)
-        self._history_changed()
-
-    def _ink(self):
-        if self.active is None:
-            clip = QGraphicsRectItem(0, 0, self.page_ref.width, self.page_ref.height)
-            clip.setPen(QPen(Qt.PenStyle.NoPen))
-            clip.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape)
-            self.scene_obj.addItem(clip)
-            stack = QUndoStack(self)
-            stack.setUndoLimit(150)
-            stack.indexChanged.connect(self._history_changed)
-            self.active = self.pages[self.page_ref.page] = (clip, stack)
-        return self.active
-
-    def set_mode(self, mode):
-        self.mode = mode
-        self.left_drag_pans = mode == "pan"
-        self._update_cursor()
-
-    def tool_cursor(self):
-        if self.mode == "pan":
-            return super().tool_cursor()
-        return QCursor(Qt.CursorShape.CrossCursor)
-
-    def attach_items(self, items):
-        clip, _ = self._ink()
-        for item in items:
-            item.setParentItem(clip)
-
-    def detach_items(self, items):
-        for item in items:
-            item.setParentItem(None)
-            self.scene_obj.removeItem(item)
-
-    def _history_changed(self, *_):
-        stack = self.active[1] if self.active is not None else None
-        self.historyChanged.emit(bool(stack and stack.canUndo()), bool(stack and stack.canRedo()))
-
-    def history(self, redo=False):
-        if self.active is not None:
-            stack = self.active[1]
-            stack.redo() if redo else stack.undo()
-
-    def _position(self, event):
-        return self.viewportTransform().inverted()[0].map(event.position())
-
-    def mousePressEvent(self, event):
-        if (event.button() != Qt.MouseButton.LeftButton or self.mode == "pan" or
-                self._space_down or self.page_ref is None):
-            super().mousePressEvent(event)
-            return
-        point = self._position(event)
-        if self.page_item.boundingRect().contains(point):
-            if self.mode == "eraser":
-                if self.active:
-                    clip, stack = self.active
-                    for item in self.scene_obj.items(point):
-                        if item.parentItem() is clip:
-                            stack.push(RemoveItems(self, [item], "Erase Stroke"))
-                            break
-            else:
-                style = self.settings.get(self.mode)
-                self.stroke = StrokeItem(QColor(style["color"]), style["size"],
-                                         self.mode == "highlighter", style.get("alpha", 1.0))
-                self.stroke.add_point(point)
-                self.attach_items([self.stroke])
-        event.accept()
-
-    def mouseMoveEvent(self, event):
-        if self.stroke is not None:
-            bounds = self.page_item.boundingRect()
-            point = self._position(event)
-            self.stroke.add_point(QPointF(min(max(0, point.x()), bounds.right()),
-                                          min(max(0, point.y()), bounds.bottom())))
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.stroke is not None:
-            stroke, self.stroke = self.stroke, None
-            self.active[1].push(AddItems(self, [stroke], "Add Stroke"))
-            event.accept()
-        else:
-            super().mouseReleaseEvent(event)
-
-
 class ReferenceDocument(QWidget):
     def __init__(self, panel, path, stamp):
         super().__init__()
         self.panel, self.source, self.stamp = panel, path, stamp
         self.render = panel.owner.render
         self.group = ("standards", id(self))
-        self.pdf = None
-        self.pdf_stamp = ()
-        self.sizes = {}
         self.count = 0
-        self.info_job = None
         self.conversion_cancel = Event()
         self.style = ToolSettings()
-        self.canvas = ReferenceCanvas(self.render, self.style)
+        self.canvas = ContinuousReferenceView(self.render, self.style)
+        key = sha256(str(path).encode("utf-8")).hexdigest()
+        self.annotations = Settings(panel.owner.settings.path.parent / "reference-annotations" / f"{key}.json")
+        self.canvas.stack.indexChanged.connect(self._save_annotations)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(4)
         nav = row(root, (4, 0, 4, 0))
-        self.previous = button(nav, "chevron-left", "Previous page", lambda: self.go_to(self.page.value() - 2))
-        self.page = QSpinBox()
-        self.page.setFixedWidth(66)
-        self.page.setMinimum(1)
-        self.page.setKeyboardTracking(False)
-        self.page.setAccessibleName("Page number")
-        self.page.valueChanged.connect(lambda value: self.go_to(value - 1))
-        nav.addWidget(self.page)
         self.total = QLabel()
+        self.total.setAccessibleName("Page position")
         nav.addWidget(self.total)
-        self.next = button(nav, "chevron-right", "Next page", lambda: self.go_to(self.page.value()))
+        self.canvas.visiblePageChanged.connect(self._navigation)
         nav.addStretch(1)
         if path.suffix.casefold() in TABLE_EXTS:
             button(nav, "detach", "Send table to Numbers…", lambda: panel.send_table_to_numbers(path))
@@ -199,28 +81,30 @@ class ReferenceDocument(QWidget):
             menu.addAction(title, slot)
         self.zoom.setMenu(menu)
         nav.addWidget(self.zoom)
-        self.canvas.zoomChanged.connect(lambda z: self.zoom.setText(f"{z:.0%}"))
+        self.canvas.zoomChanged.connect(lambda z: self.zoom.setText(f"{z:.0f}%"))
 
         ink = row(root, (4, 0, 4, 0))
+        tools = [("pan", "select", "Pan"), ("pen", "pen", "Pen"),
+                 ("highlighter", "highlighter", "Highlighter"), ("text", "text", "Text"),
+                 ("eraser", "eraser", "Erase annotation")]
         self.tools = {
             mode: button(ink, icon, title, lambda _=False, m=mode: self._set_mode(m), True)
-            for mode, icon, title in (("pan", "select", "Pan"), ("pen", "pen", "Pen"),
-                                      ("highlighter", "highlighter", "Highlighter"), ("eraser", "eraser", "Erase a stroke"))
+            for mode, icon, title in tools
         }
         self.colour = button(ink, "fill", "Ink colour", self._colour)
-        self.width = QDoubleSpinBox()
-        self.width.setFixedWidth(70)
-        self.width.setSuffix(" pt")
-        self.width.setDecimals(2)
-        self.width.setSingleStep(0.5)
-        self.width.setKeyboardTracking(False)
+        self.width = QLineEdit()
+        self.width.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.size_validator = QDoubleValidator(self.width)
+        self.size_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.width.setValidator(self.size_validator)
+        self.width.editingFinished.connect(self._update_size)
+        self.width.setFixedWidth(58)
         self.width.setAccessibleName("Ink thickness")
         self.width.setToolTip("Ink thickness")
-        self.width.valueChanged.connect(lambda w: self.style.set(self.canvas.mode, "size", w))
         ink.addWidget(self.width)
         ink.addStretch(1)
-        self.undo = button(ink, "undo", "Undo reference stroke", self.canvas.history)
-        self.redo = button(ink, "redo", "Redo reference stroke", lambda: self.canvas.history(True))
+        self.undo = button(nav, "undo", "Undo annotation", lambda: self.canvas.history())
+        self.redo = button(nav, "redo", "Redo annotation", lambda: self.canvas.history(True))
         self.undo.setEnabled(False)
         self.redo.setEnabled(False)
         self.canvas.historyChanged.connect(self._history_enabled)
@@ -245,71 +129,64 @@ class ReferenceDocument(QWidget):
         self.status.setVisible(bool(text))
 
     def load(self, pdf):
-        self.pdf = str(pdf)
-        self.pdf_stamp = PageRef.stamp_for(self.pdf)
-        self.go_to(0)
-
-    def go_to(self, index):
-        if self.pdf is None or index < 0 or (self.count and index >= self.count):
-            return
-        if self.info_job is not None:
-            self.render.cancel(self.info_job, self.group)
-            self.info_job = None
-        self.page.blockSignals(True)
-        self.page.setValue(index + 1)
-        self.page.blockSignals(False)
-        self._navigation()
-        if index in self.sizes:
-            self._display(index)
-            return
-        self.message("Loading page…" if self.count else "Opening reference…")
+        pdf = str(pdf)
+        stamp = PageRef.stamp_for(pdf)
+        self.message("Opening reference…")
 
         def ready(result):
-            self.info_job = None
-            if not result.ok or not result.header.get("sizes"):
+            sizes = result.header.get("sizes")
+            if not result.ok or not sizes:
                 self.message(result.error or "This document has no readable pages.")
-                ref = self.canvas.page_ref
-                self.page.blockSignals(True)
-                self.page.setValue(ref.page + 1 if ref else 1)
-                self.page.blockSignals(False)
-                self._navigation()
                 return
-            self.count = result.header["page_count"]
-            self.sizes[index] = result.header["sizes"][0]
-            self.page.setMaximum(self.count)
-            self._display(index)
+            self.count = len(sizes)
+            self.message("")
+            refs = [PageRef(pdf, i, w, h, stamp) for i, (w, h) in enumerate(sizes)]
+            self.canvas.set_pages(refs)
+            if self.annotations.get("stamp") == list(self.stamp):
+                self.canvas.restore_annotations(self.annotations.get("pages", {}))
             self._navigation()
 
-        self.info_job = self.render.submit("info", {"path": self.pdf, "size_limit": 1, "first_page": index},
-                                           ready, priority=PRI_PREVIEW, group=self.group)
+        self.render.submit("info", {"path": pdf, "all_sizes": True},
+                           ready, priority=PRI_PREVIEW, group=self.group)
 
-    def _display(self, index):
-        w, h = self.sizes[index]
-        self.message("")
-        self.canvas.set_page(PageRef(self.pdf, index, w, h, self.pdf_stamp))
+    def _navigation(self, *_):
+        self.total.setText(f"{self.canvas.current_page + 1} / {self.count}" if self.count else "–")
 
-    def _navigation(self):
-        self.total.setText(f"/ {self.count}" if self.count else "/ –")
-        self.page.setEnabled(self.count > 1)
-        self.previous.setEnabled(self.count > 1 and self.page.value() > 1)
-        self.next.setEnabled(self.page.value() < self.count)
+    def _save_annotations(self, *_):
+        self.annotations.set("stamp", list(self.stamp))
+        self.annotations.set("pages", self.canvas.annotation_data())
+        if not self.annotations.save():
+            self.message("Reference annotations could not be saved.")
 
     def _set_mode(self, mode):
         self.canvas.set_mode(mode)
         for name, control in self.tools.items():
             control.setChecked(name == mode)
-        is_ink = mode in ("pen", "highlighter")
+        is_ink = mode in ("pen", "highlighter", "text")
         self.colour.setEnabled(is_ink)
         self.width.setEnabled(is_ink)
         if is_ink:
             settings = self.style.get(mode)
-            self.width.blockSignals(True)
-            self.width.setRange(*RANGES[mode][:2])
-            self.width.setValue(settings["size"])
-            self.width.blockSignals(False)
+            self.size_validator.setRange(*RANGES[mode][:2], 2)
+            self._show_size(settings["size"])
+            label = "Text size in points" if mode == "text" else "Ink thickness in points"
+            self.width.setAccessibleName(label)
+            self.width.setToolTip(label)
             self._colour_icon(settings["color"])
         else:
+            self.width.clear()
             self.colour.setIcon(icons.icon("fill"))
+
+    def _show_size(self, size):
+        self.width.setText(self.size_validator.locale().toString(float(size), 'g', 5))
+
+    def _update_size(self):
+        mode = self.canvas.mode
+        if mode in ("pen", "highlighter", "text"):
+            size, valid = self.size_validator.locale().toDouble(self.width.text())
+            if valid and self.width.hasAcceptableInput():
+                self.style.set(mode, "size", size)
+            self._show_size(self.style.get(mode)["size"])
 
     def _colour_icon(self, color):
         self.colour.setIcon(QIcon(icons.pixmap("fill", 16, color)))
@@ -317,7 +194,7 @@ class ReferenceDocument(QWidget):
 
     def _colour(self):
         mode = self.canvas.mode
-        if mode in ("pen", "highlighter"):
+        if mode in ("pen", "highlighter", "text"):
             color = QColorDialog.getColor(QColor(self.style.get(mode)["color"]), self, "Reference ink colour")
             if color.isValid():
                 self.style.set(mode, "color", color.name())
@@ -349,13 +226,13 @@ class StandardsPanel(QWidget):
         root.setContentsMargins(6, 4, 6, 6)
         root.setSpacing(6)
         top = row(root)
-        button(top, "folder-open", "Choose Standards folder…", self.choose_folder)
+        button(top, "folder-open", "Choose Reference folder…", self.choose_folder)
         button(top, "file", "Open reference files…", self.choose_files)
         self.browse_button = button(top, "book", "Browse and add documents", self._toggle_browser)
-        self.back = button(top, "chevron-left", "Previous document tab", lambda: self._step(-1))
-        self.forward = button(top, "chevron-right", "Next document tab", lambda: self._step(1))
+        self.back = button(top, "chevron-left", "Previous reference document", lambda: self._step(-1))
+        self.forward = button(top, "chevron-right", "Next reference document", lambda: self._step(1))
         top.addStretch(1)
-        self.float_button = button(top, "detach", "Detach Standards", dock.toggle_floating)
+        self.float_button = button(top, "detach", "Detach Reference", dock.toggle_floating)
 
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
@@ -363,7 +240,7 @@ class StandardsPanel(QWidget):
         layout = QVBoxLayout(browser)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
-        self.folder_name = ElidedLabel("Choose a Standards folder", Qt.TextElideMode.ElideMiddle)
+        self.folder_name = ElidedLabel("Choose a Reference folder", Qt.TextElideMode.ElideMiddle)
         layout.addWidget(self.folder_name)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter documents")
@@ -389,7 +266,7 @@ class StandardsPanel(QWidget):
         self.tabs.setTabsClosable(True)
         self.tabs.setElideMode(Qt.TextElideMode.ElideMiddle)
         self.tabs.tabCloseRequested.connect(self.close_tab)
-        self.tabs.currentChanged.connect(self._arrows)
+        self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.tabBar().tabMoved.connect(self._arrows)
         self.stack.addWidget(self.tabs)
         self.stack.currentChanged.connect(self._browser_changed)
@@ -407,6 +284,7 @@ class StandardsPanel(QWidget):
     def _browser_changed(self, index):
         self.browse_button.setToolTip("Return to open documents" if index == 0 and self.tabs.count()
                                       else "Browse and add documents")
+        self.owner._refresh_edit_history()
 
     def _toggle_browser(self):
         if self.stack.currentIndex() == 0 and self.tabs.count():
@@ -418,7 +296,7 @@ class StandardsPanel(QWidget):
         self.stack.setCurrentIndex(0)
 
     def choose_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Choose Standards Folder",
+        folder = QFileDialog.getExistingDirectory(self, "Choose Reference Folder",
                                                   str(self.folder or Path.home()))
         if folder:
             path = Path(folder)
@@ -535,7 +413,7 @@ class StandardsPanel(QWidget):
 
     def choose_files(self):
         patterns = " ".join("*" + ext for ext in sorted(STANDARDS_EXTS))
-        paths, _ = QFileDialog.getOpenFileNames(self, "Open Standards References",
+        paths, _ = QFileDialog.getOpenFileNames(self, "Open Reference Documents",
                                                str(self.folder or Path.home()), f"Reference documents ({patterns})")
         self.open_paths(Path(path) for path in paths)
 
@@ -650,6 +528,11 @@ class StandardsPanel(QWidget):
         self.stack.setCurrentIndex(1)
         self.tabs.setCurrentIndex(self.tabs.currentIndex() + delta)
 
+    def _tab_changed(self, *_):
+        self._arrows()
+        if (doc := self.tabs.currentWidget()) is not None:
+            doc.canvas.setFocus()
+
     def _arrows(self, *_):
         current = self.tabs.currentIndex()
         self.back.setEnabled(current > 0)
@@ -668,7 +551,8 @@ class StandardsDock(QDockWidget):
     """Move the same workspace between the active drawing window and a floating panel."""
 
     def __init__(self, owner):
-        super().__init__("Standards", owner)
+        super().__init__("Reference", owner)
+        self.setAccessibleName("Reference")
         self.owner = self.host = owner
         self.width_hint = 355
         self.setAllowedAreas(RIGHT)
@@ -714,14 +598,64 @@ class StandardsDock(QDockWidget):
 
     def _floating_changed(self, floating):
         self.panel.float_button.setIcon(icons.icon("sidebar-right" if floating else "detach"))
-        self.panel.float_button.setToolTip("Reattach Standards" if floating else "Detach Standards")
+        label = "Reattach Reference" if floating else "Detach Reference"
+        self.panel.float_button.setToolTip(label)
+        self.panel.float_button.setAccessibleName(label)
+
+    def active_document(self):
+        focus = QApplication.focusWidget()
+        if self.isVisible() and self.panel.stack.currentIndex() == 1 and focus and self.isAncestorOf(focus):
+            return self.panel.tabs.currentWidget()
+        return None
+
+    def edit_history(self, redo):
+        doc = self.active_document()
+        if doc is None:
+            return False
+        focus = QApplication.focusWidget()
+        if isinstance(focus, QLineEdit):
+            focus.redo() if redo else focus.undo()
+        else:
+            doc.canvas.history(redo)
+        return True
 
     def eventFilter(self, watched: QObject, event: QEvent):
+        if event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+            if self._annotation_shortcut(event):
+                return True
         if (event.type() == QEvent.Type.WindowActivate and self.isVisible() and not self.isFloating()
                 and watched is not self.host
                 and (watched is self.owner or watched in self.owner._mark_windows.values())):
             QTimer.singleShot(0, self, lambda: self._follow_active(watched))
         return False
+
+    def _annotation_shortcut(self, event):
+        doc = self.active_document()
+        if doc is None:
+            return False
+        if (event.type() == QEvent.Type.ShortcutOverride
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)):
+            # The host Viewer binds these keys to its own page navigation.
+            event.accept()
+            return True
+        undo = event.matches(QKeySequence.StandardKey.Undo)
+        redo = event.matches(QKeySequence.StandardKey.Redo) or (
+            event.key() == Qt.Key.Key_Z
+            and event.modifiers() == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+        )
+        if not undo and not redo:
+            return False
+        if isinstance(QApplication.focusWidget(), QLineEdit) or doc.canvas.editing is not None:
+            # Let the editor handle its own text undo, even if the host has an Undo action.
+            if event.type() == QEvent.Type.ShortcutOverride:
+                event.accept()
+                return True
+            return False
+        if event.type() == QEvent.Type.KeyPress:
+            doc.canvas.history(redo)
+        event.accept()
+        return True
 
     def _follow_active(self, host):
         if QApplication.activeWindow() is host and self.isVisible() and not self.isFloating():

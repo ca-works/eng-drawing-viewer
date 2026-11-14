@@ -544,8 +544,8 @@ class MainWindow(QMainWindow):
         # (the viewer's Copy and Copy Filename are disabled there).
         image = lambda name, *args: (lambda: self._image_command(name, *args))  # noqa: E731
         self.image_actions = [
-            self._act(e, "Undo", image("history", False), QKeySequence.StandardKey.Undo, "undo"),
-            self._act(e, "Redo", image("history", True), [QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"], "redo"),
+            self._act(e, "Undo", lambda: self._edit_history(False), QKeySequence.StandardKey.Undo, "undo"),
+            self._act(e, "Redo", lambda: self._edit_history(True), [QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"], "redo"),
             self._act(e, "Cut", image("cut"), QKeySequence.StandardKey.Cut),
             self._act(e, "Paste as New Layer", image("paste"), QKeySequence.StandardKey.Paste),
             self._act(e, "Paste as New Document", image("paste", True)),
@@ -1369,7 +1369,7 @@ class MainWindow(QMainWindow):
         self.view.viewport().update()
 
     def standards_button(self, host):
-        button = tool_button("book", "Standards Reference", text="Standards" if host is self else None)
+        button = tool_button("book", "Reference", text="Reference" if host is self else None)
         button.clicked.connect(lambda: self._toggle_standards(host))
         return button
 
@@ -1378,6 +1378,7 @@ class MainWindow(QMainWindow):
             from .standards import StandardsDock
 
             self._standards = StandardsDock(self)
+            QApplication.instance().focusChanged.connect(self._refresh_edit_history)
         return self._standards
 
     def _toggle_standards(self, host):
@@ -1577,6 +1578,7 @@ class MainWindow(QMainWindow):
         self.title_label.setText((Path(self.doc_path).name if self.doc_path else "") if mode == "viewer" else "")
         for action in self.image_actions:
             action.setEnabled(mode == "image")
+        self._refresh_edit_history()
         self.act_copy.setText("Copy Layer or Selection" if mode == "image" else "Copy Page as Image")
         self.act_copy_name.setText("Copy Merged" if mode == "image" else "Copy Filename")
         self._update_nav()
@@ -1594,6 +1596,15 @@ class MainWindow(QMainWindow):
         if self._mode != "image" or self.image_editor is None:
             return
         getattr(self.image_editor, name)(*args)
+
+    def _refresh_edit_history(self, *_):
+        active = self._standards is not None and self._standards.active_document() is not None
+        for action in self.image_actions[:2]:
+            action.setEnabled(active or self._mode == "image")
+
+    def _edit_history(self, redo):
+        if self._standards is None or not self._standards.edit_history(redo):
+            self._image_command("history", redo)
 
     def open_image_editor(self, path=None):
         self.set_mode("image")

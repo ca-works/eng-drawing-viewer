@@ -416,20 +416,27 @@ class PageView(QGraphicsView):
         ref = self._ref
         if ref is None or self._zoom_anim.state() == QVariantAnimation.State.Running or self._gesture_active:
             return
-        dpr = self.devicePixelRatioF()
-        s = quantize_scale(self._zoom * dpr)
-        cache = pixmap_cache()
-        thin = self.thin_lines
-        group = self._group(ref)
+        s = self._tile_scale()
+        self._prepare_tile_scale(s)
+        self._request_page_tiles(ref, self._visible_scene_rect(), s)
+
+    def _tile_scale(self):
+        return quantize_scale(self._zoom * self.devicePixelRatioF())
+
+    def _prepare_tile_scale(self, s):
         if self._req_scale is not None and self._req_scale != s:
             # Abandon queued tiles for the previous zoom level.
             for k, job in list(self._pending.items()):
                 if k[3] != s:
-                    self.render.cancel(job, group)
+                    self.render.cancel(job, ("page", k[1], id(self)))
                     del self._pending[k]
         self._req_scale = s
+
+    def _request_page_tiles(self, ref, visible, s):
+        cache = pixmap_cache()
+        thin = self.thin_lines
+        group = self._group(ref)
         page_rect = QRectF(0, 0, ref.width, ref.height)
-        visible = self._visible_scene_rect()
         # Request a ring of one tile around the viewport so small pans stay sharp.
         margin = TILE / s
         wanted_rect = visible.adjusted(-margin, -margin, margin, margin).intersected(page_rect)
@@ -467,18 +474,23 @@ class PageView(QGraphicsView):
         if getattr(self, "_dead", False) or not shiboken6.isValid(self):
             return
         self._pending.pop(key, None)
+        item = self._tile_item(key[1])
         if not res.ok or res.image is None:
-            if self._ref is not None and key[1] == self._ref.key and res.error:
+            if item is not None and res.error:
                 self.renderError.emit(res.error)
             return
         pm = _TilePixmap(QPixmap.fromImage(res.image), (res.header.get("x0", key[4] * TILE), res.header.get("y0", key[5] * TILE)))
         pixmap_cache().put(key, pm)
-        if self._ref is not None and key[1] == self._ref.key:
+        if item is not None:
             s = key[3]
             r = QRectF(pm.property_origin[0] / s, pm.property_origin[1] / s, pm.width() / s, pm.height() / s)
-            self.page_item.update(r)
+            item.update(r)
             if not self._pending:
                 self.pageReady.emit()
+
+    def _tile_item(self, page_key):
+        if self._ref is not None and page_key == self._ref.key:
+            return self.page_item
 
     # ----------------------------------------------------------------- zoom
     def _update_scene_rect(self):

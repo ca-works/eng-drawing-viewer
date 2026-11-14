@@ -350,13 +350,11 @@ class MarkWindow(QMainWindow):
         act(f, "Close MARK", self.close, QKeySequence.StandardKey.Close)
 
         e = mb.addMenu("&Edit")
-        self.act_undo = self.canvas.undo_stack.createUndoAction(self, "Undo")
-        self.act_undo.setShortcuts(key_sequences(QKeySequence.StandardKey.Undo))
-        e.addAction(self.act_undo)
-        self.act_redo = self.canvas.undo_stack.createRedoAction(self, "Redo")
+        self.act_undo = act(e, "Undo", lambda: self._edit_history(False), QKeySequence.StandardKey.Undo)
         # Windows' standard Redo keys already include Ctrl+Y; Ctrl+Shift+Z is added for everyone.
-        self.act_redo.setShortcuts(key_sequences([QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"]))
-        e.addAction(self.act_redo)
+        self.act_redo = act(e, "Redo", lambda: self._edit_history(True),
+                            [QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"])
+        e.aboutToShow.connect(self._update_edit_history)
         e.addSeparator()
         self.act_copy = act(e, "Copy Selected Markup (or Marked Page)", self.copy_or_page, QKeySequence.StandardKey.Copy)
         self.act_paste = act(e, "Paste Markup", self.paste_markup, QKeySequence.StandardKey.Paste)
@@ -602,6 +600,7 @@ class MarkWindow(QMainWindow):
         sel = bool(self.canvas.selected_annotations())
         self.btn_undo.setEnabled(self.canvas.undo_stack.canUndo())
         self.btn_redo.setEnabled(self.canvas.undo_stack.canRedo())
+        self._update_edit_history()
         self.btn_clear.setEnabled(has)
         self.act_clear.setEnabled(has)
         self.act_delete.setEnabled(sel)
@@ -609,6 +608,23 @@ class MarkWindow(QMainWindow):
         self.act_renumber.setEnabled(bool(self.canvas.bubbles()))
         if self.canvas.tool == "bubble":
             self.next_label.setText(f"Next callout: {self.canvas.next_number()}")
+
+    def _update_edit_history(self):
+        dock = getattr(self.owner, "_standards", None)
+        doc = dock.active_document() if dock is not None else None
+        stack = doc.canvas.stack if doc is not None else self.canvas.undo_stack
+        editing = doc is not None and doc.canvas.editing is not None
+        self.act_undo.setEnabled(editing or stack.canUndo())
+        self.act_redo.setEnabled(editing or stack.canRedo())
+        self.act_undo.setText("Undo" if doc is not None or not stack.canUndo() else f"Undo {stack.undoText()}")
+        self.act_redo.setText("Redo" if doc is not None or not stack.canRedo() else f"Redo {stack.redoText()}")
+
+    def _edit_history(self, redo):
+        dock = getattr(self.owner, "_standards", None)
+        if dock is None or not dock.edit_history(redo):
+            stack = self.canvas.undo_stack
+            stack.redo() if redo else stack.undo()
+        self._update_edit_history()
 
     def clear_all(self):
         if not self.canvas.has_markup():

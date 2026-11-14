@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.7 — macOS Apple Silicon
+
+- Use the renamed Reference panel in VIEWER and MARK. The toolbar arrows switch documents,
+  and a compact field adjusts pen width.
+- Scroll through PDFs continuously. Pages render as they come into view, and annotations
+  stay attached to their pages across scrolling, zoom, and reopening.
+- Use Command-Z and Shift-Command-Z or the Edit menu to undo and redo completed
+  annotation edits in the active reference.
+
 ## 2.3.3 — macOS Universal local candidate
 
 - Add vector PASS and FAIL stamps with adjustable opacity and an optional fixed placement date.

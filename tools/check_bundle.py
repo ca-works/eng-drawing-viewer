@@ -427,6 +427,11 @@ def main():
                                   "qschannelbackend", "qopensslbackend", "qcertonlybackend", "qnetworklistmanager",
                                   "win32net", "win32wnet", "win32inet")):
             findings.append(f"{rel}: excluded component is bundled")
+        # FFmpeg (OpenCV's video I/O): the app never uses it, and every edition ships the minimal
+        # OpenCV (tools/build_opencv_minimal.sh / build_opencv_minimal_windows.py) without it.
+        if re.search(r"(?:^|/)(?:lib)?(?:avcodec|avformat|avutil|avdevice|avfilter|swscale|swresample)[-.]"
+                     r"|opencv_videoio_ffmpeg", rel, re.I):
+            findings.append(f"{rel}: FFmpeg is bundled")
         scan_bytes(rel, data, findings)
         if windows and is_pe(data):
             pe_report(rel, path, findings, info)
