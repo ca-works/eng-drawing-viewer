@@ -4,12 +4,15 @@ from functools import lru_cache
 import io
 from pathlib import Path
 import sqlite3
+import sys
 from tempfile import TemporaryDirectory
 from threading import Event
 
 from PySide6.QtCore import QAbstractTableModel, QEvent, Qt, QThreadPool, QModelIndex
-from PySide6.QtGui import QKeySequence
-from PySide6.QtWidgets import QApplication, QHeaderView, QLabel, QMenu, QTableView, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtGui import QAccessible, QKeySequence
+from PySide6.QtWidgets import (
+    QApplication, QAccessibleWidget, QHeaderView, QLabel, QMenu, QTableView, QTabWidget, QVBoxLayout, QWidget,
+)
 
 from ..core.reference_workbook import column_name, index_sheet, read_workbook
 from .image_editor.common import Job
@@ -66,6 +69,16 @@ class WorksheetGrid(QTableView):
             header.setDefaultSectionSize(default)
         self.verticalHeader().setFixedWidth(max(35, self.fontMetrics().horizontalAdvance(str(size[0])) + 14))
 
+    def currentChanged(self, current, previous):
+        super().currentChanged(current, previous)
+        if sys.platform == "darwin":
+            if current.isValid():
+                address = f"{column_name(current.column() + 1)}{current.row() + 1}"
+                value = current.data() or "Blank"
+                self.setAccessibleDescription(f"{address}: {value[:256]}")
+            else:
+                self.setAccessibleDescription("Use the arrow keys to navigate the worksheet.")
+
     def event(self, event):
         if event.type() == QEvent.Type.ShortcutOverride:
             # The drawing window also binds these keys to PDF page navigation.
@@ -117,6 +130,19 @@ class WorksheetGrid(QTableView):
                 return
         QApplication.clipboard().setText(output.getvalue().removesuffix("\r\n"))
         self.notify("")
+
+
+def _worksheet_accessible(class_name, widget):
+    # Cocoa's native table adapter creates accessibility rows for the full grid and
+    # can crash when a client queries cells after a jump across a large worksheet.
+    # Keep the grid focusable and expose the active cell through its description.
+    if class_name == "WorksheetGrid":
+        return QAccessibleWidget(widget, QAccessible.Role.Grouping)
+    return None
+
+
+if sys.platform == "darwin":
+    QAccessible.installFactory(_worksheet_accessible)
 
 
 class WorkbookReference(QWidget):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.9 — macOS Universal
+
+- Prevented a macOS accessibility crash when navigating large Excel worksheets in Reference. The focused grid exposes the current cell address and value.
+
 ## 2.3.8 — macOS Universal
 
 - Image Editor numeric fields leave more room for values in narrow panels.

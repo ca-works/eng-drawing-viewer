@@ -4,7 +4,7 @@ import sys
 import pymupdf
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QPixmap, QWheelEvent
+from PySide6.QtGui import QAccessible, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit
 
 from eng_viewer.ui.main_window import MainWindow
@@ -217,6 +217,10 @@ def test_xlsx_reference_grid_and_pdf(qtbot, render, theme, settings, tmp_path, m
     assert grid.currentIndex() == distant
     assert grid.visualRect(distant).intersects(grid.viewport().rect())
     assert distant.data() == "Scroll target"
+    accessible = QAccessible.queryAccessibleInterface(grid)
+    assert accessible.role() == QAccessible.Role.Grouping
+    assert accessible.text(QAccessible.Text.Name) == "Read-only worksheet"
+    assert accessible.text(QAccessible.Text.Description) == "AB60000: Scroll target"
     assert 1 not in book.grids
     book.canvas.setCurrentIndex(1)
     qtbot.waitUntil(lambda: 1 in book.grids, timeout=15000)
