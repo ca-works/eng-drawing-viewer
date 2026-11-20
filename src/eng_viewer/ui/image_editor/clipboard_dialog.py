@@ -1,7 +1,8 @@
 """Small reusable clipboard preferences dialog."""
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
-    QFormLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout)
+    QFormLayout, QLabel, QPushButton, QVBoxLayout)
 from PySide6.QtGui import QColor
+from .common import SpinBox
 
 from ...core.image_clipboard import FORMATS
 
@@ -26,16 +27,16 @@ class ClipboardDialog(QDialog):
             self.region.addItem("Selected region", "selection")
         self.region.setCurrentIndex(max(0, self.region.findData(settings.get("region", "image"))))
         form.addRow("Copy", self.region)
-        self.quality = QSpinBox()
+        self.quality = SpinBox()
         self.quality.setRange(1, 100)
         self.quality.setValue(settings.get("quality", 90))
         form.addRow("Quality", self.quality)
-        self.scale = QSpinBox()
+        self.scale = SpinBox()
         self.scale.setRange(1, 400)
         self.scale.setSuffix(" %")
         self.scale.setValue(settings.get("scale", 100))
         form.addRow("Resolution", self.scale)
-        self.dpi = QSpinBox()
+        self.dpi = SpinBox()
         self.dpi.setRange(1, 2400)
         self.dpi.setValue(settings.get("dpi", 96))
         form.addRow("DPI", self.dpi)

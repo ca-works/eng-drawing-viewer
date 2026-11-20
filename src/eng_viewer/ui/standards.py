@@ -24,6 +24,7 @@ from .image_editor.common import Job
 from .mark.tool_options import RANGES, ToolSettings
 from .page_view import PageRef
 from .reference_view import ContinuousReferenceView
+from .reference_workbook import WorkbookReference
 from .widgets import ElidedLabel, primary_button, tool_button
 
 RIGHT = Qt.DockWidgetArea.RightDockWidgetArea
@@ -199,6 +200,9 @@ class ReferenceDocument(QWidget):
             if color.isValid():
                 self.style.set(mode, "color", color.name())
                 self._colour_icon(color.name())
+
+    def focus_preview(self):
+        self.canvas.setFocus()
 
     def release(self):
         self.conversion_cancel.set()
@@ -440,7 +444,7 @@ class StandardsPanel(QWidget):
                     break
             else:
                 stamp = PageRef.stamp_for(source)
-                doc = ReferenceDocument(self, source, stamp)
+                doc = WorkbookReference(source) if ext == ".xlsx" else ReferenceDocument(self, source, stamp)
                 if ext not in self.file_icons:
                     self.file_icons[ext] = self.icon_provider.icon(QFileInfo(str(source)))
                 idx = self.tabs.addTab(doc, self.file_icons[ext], source.name)
@@ -448,7 +452,7 @@ class StandardsPanel(QWidget):
                 self.tabs.setCurrentIndex(idx)
                 if not available or not stamp:
                     doc.message("This file is missing or unavailable. Close this tab and choose the file again.")
-                elif ext == ".pdf":
+                elif ext in {".pdf", ".xlsx"}:
                     doc.load(source)
                 else:
                     self._convert(doc, ext)
@@ -531,7 +535,7 @@ class StandardsPanel(QWidget):
     def _tab_changed(self, *_):
         self._arrows()
         if (doc := self.tabs.currentWidget()) is not None:
-            doc.canvas.setFocus()
+            doc.focus_preview()
 
     def _arrows(self, *_):
         current = self.tabs.currentIndex()
@@ -608,6 +612,9 @@ class StandardsDock(QDockWidget):
             return self.panel.tabs.currentWidget()
         return None
 
+    def annotation_canvas(self, doc):
+        return doc.canvas if isinstance(doc, ReferenceDocument) else None
+
     def edit_history(self, redo):
         doc = self.active_document()
         if doc is None:
@@ -615,7 +622,7 @@ class StandardsDock(QDockWidget):
         focus = QApplication.focusWidget()
         if isinstance(focus, QLineEdit):
             focus.redo() if redo else focus.undo()
-        else:
+        elif isinstance(doc, ReferenceDocument):
             doc.canvas.history(redo)
         return True
 
@@ -646,6 +653,9 @@ class StandardsDock(QDockWidget):
         )
         if not undo and not redo:
             return False
+        if isinstance(doc, WorkbookReference):
+            event.accept()
+            return True
         if isinstance(QApplication.focusWidget(), QLineEdit) or doc.canvas.editing is not None:
             # Let the editor handle its own text undo, even if the host has an Undo action.
             if event.type() == QEvent.Type.ShortcutOverride:

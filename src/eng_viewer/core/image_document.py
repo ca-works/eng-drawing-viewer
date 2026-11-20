@@ -438,11 +438,11 @@ class ImageDocument:
         self._trim_history()
         return True
 
-    def composite(self, start=0, stop=None):
+    def composite(self, start=0, stop=None, *, omit=None):
         """Flattened visible layers ``start``–``stop`` (all by default) on a transparent canvas."""
         canvas = Image.new("RGBA", self.size)
         for layer in self.layers[start:stop]:
-            if not layer.visible or layer.opacity <= 0:
+            if layer is omit or not layer.visible or layer.opacity <= 0:
                 continue
             image = layer.rendered()
             # Work only on the overlap, avoiding a second full-canvas buffer per layer.

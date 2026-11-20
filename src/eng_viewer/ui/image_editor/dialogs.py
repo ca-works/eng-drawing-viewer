@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
     QVBoxLayout, QWidget)
 
 from ...core.image_export import optimize_export, export_file
-from .common import Job, to_qimage
+from .common import DoubleSpinBox, SpinBox, Job, to_qimage
 
 
 class Comparison(QWidget):
@@ -80,7 +80,7 @@ class ExportDialog(QDialog):
         self.quality = QSlider(Qt.Orientation.Horizontal)
         self.quality.setRange(1, 100)
         self.quality.setValue(90)
-        self.quality_number = QSpinBox()
+        self.quality_number = SpinBox()
         self.quality_number.setRange(1, 100)
         self.quality_number.setValue(90)
         self.quality.valueChanged.connect(self.quality_number.setValue)
@@ -95,7 +95,7 @@ class ExportDialog(QDialog):
         for name, value in [("No size target", 0), ("Under 100 KB", 100_000), ("Under 500 KB", 500_000),
                             ("Under 1 MB", 1_000_000), ("Under 5 MB", 5_000_000), ("Custom KB", -1)]:
             self.target.addItem(name, value)
-        self.custom = QSpinBox()
+        self.custom = SpinBox()
         self.custom.setRange(1, 2_000_000)
         self.custom.setValue(500)
         self.custom.setSuffix(" KB")
@@ -110,7 +110,7 @@ class ExportDialog(QDialog):
         form.addRow("Colour", self.profile)
         self.metadata = QCheckBox("Preserve source metadata (may contain location)")
         form.addRow("Metadata", self.metadata)
-        self.dpi = QSpinBox()
+        self.dpi = SpinBox()
         self.dpi.setRange(1, 2400)
         self.dpi.setValue(round(document.dpi))
         form.addRow("DPI", self.dpi)
@@ -238,12 +238,12 @@ class ResizeDialog(QDialog):
         form = QFormLayout()
         self.unit = QComboBox()
         self.unit.addItems(["Pixels", "Percent", "Inches", "Centimeters"])
-        self.w = QDoubleSpinBox()
-        self.h = QDoubleSpinBox()
+        self.w = DoubleSpinBox()
+        self.h = DoubleSpinBox()
         for spin in (self.w, self.h):
             spin.setRange(.01, 65535)
             spin.setDecimals(2)
-        self.dpi = QSpinBox()
+        self.dpi = SpinBox()
         self.dpi.setRange(1, 2400)
         self.dpi.setValue(round(document.dpi))
         self.lock = QCheckBox("Maintain aspect ratio")

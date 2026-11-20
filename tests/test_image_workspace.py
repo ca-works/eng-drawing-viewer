@@ -1,4 +1,6 @@
+from io import BytesIO
 from pathlib import Path
+import sys
 
 import pytest
 from PIL import Image
@@ -139,3 +141,144 @@ def test_grid_and_rulers_toggle_and_paint(workspace, qtbot):
     e._toggle_view('rulers')
     e.canvas.set_zoom(1600)
     e.canvas.viewport().grab()  # paints pixel grid, unit grid and ruler ticks without error
+
+
+def test_on_canvas_text_edit_and_transform(workspace, qtbot, tmp_path, qapp, monkeypatch):
+    from PySide6.QtCore import QPointF
+    from eng_viewer.ui.image_editor.transform import frame_point
+
+    e, _ = workspace
+    e.canvas.rulers = False
+    e.canvas.snap = False
+    e.canvas.set_zoom(200)
+    e.canvas.centerOn(155, 115)
+    e.set_tool("text")
+    canvas = e.canvas
+    viewport = canvas.viewport()
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    left = Qt.MouseButton.LeftButton
+    position = canvas.mapFromScene(QPointF(50, 65))
+    qtbot.mouseClick(viewport, left, pos=position)
+    editor = canvas.text_editor
+    assert editor is not None and editor.hasFocus()
+    assert canvas.mapFromScene(editor.mapToScene(QPointF())) == position
+    qtbot.keyClicks(canvas, "Hello world")
+    qtbot.keyClick(canvas, Qt.Key.Key_Left)
+    qtbot.keyClick(canvas, Qt.Key.Key_Backspace)
+    qapp.clipboard().setText("L")
+    qtbot.keyClick(canvas, Qt.Key.Key_V, ctrl)
+    qtbot.keyClick(canvas, Qt.Key.Key_Z, ctrl)
+    assert editor.toPlainText() == "Hello word"
+    qtbot.keyClick(canvas, Qt.Key.Key_Z, ctrl | Qt.KeyboardModifier.ShiftModifier)
+    assert editor.toPlainText() == "Hello worLd"
+    qtbot.keyClick(canvas, Qt.Key.Key_End)
+    qtbot.keyClick(canvas, Qt.Key.Key_Return)
+    qtbot.keyClicks(canvas, "Second line")
+    assert editor.toPlainText() == "Hello worLd\nSecond line"
+    qtbot.mouseClick(e.font_size.lineEdit(), left)
+    e.font_size.lineEdit().selectAll()
+    qtbot.keyClicks(e.font_size.lineEdit(), "32")
+    assert canvas.text_editor is editor and editor.font().pixelSize() == 32
+    qtbot.mouseClick(e.commit_text_button, left)
+    wait(qtbot, e)
+    assert e.doc.active_layer.properties["text"] == "Hello worLd\nSecond line"
+    assert e.doc.active_layer.properties["width"] == 32
+    assert len(e.doc.layers) == 2
+
+    e.set_tool("move")
+    frame = canvas.layer_frame
+    corner = canvas.mapFromScene(QPointF(*frame_point(frame, .5, .5)))
+    target = canvas.mapFromScene(QPointF(*frame_point(frame, .8, .8)))
+    qtbot.mousePress(viewport, left, pos=corner)
+    assert canvas._drag is not None
+    qtbot.mouseMove(viewport, target)
+    assert not canvas.preview_items[1].transform().isIdentity()
+    qtbot.mouseRelease(viewport, left, pos=target)
+    wait(qtbot, e)
+    assert e.doc.active_layer.image.width > frame[2]
+    path = tmp_path / "point text.engimg"
+    e.doc.save_project(path)
+    reopened = ImageDocument.load_project(path)
+    assert reopened.composite().tobytes() == e.doc.composite().tobytes()
+    e.add_document(reopened, "Reopened")
+    e.set_tool("text")
+    layer = e.doc.active_layer
+    position = canvas.mapFromScene(QPointF(layer.x + 8, layer.y + 8))
+    qtbot.mouseClick(viewport, left, pos=position)
+    assert canvas.text_editor.toPlainText() == layer.properties["text"]
+    qtbot.keyClick(canvas, Qt.Key.Key_A, ctrl)
+    qtbot.keyClicks(canvas, "Canceled")
+    qtbot.keyClick(canvas, Qt.Key.Key_Escape)
+    assert e.doc.active_layer.properties["text"] == "Hello worLd\nSecond line"
+
+    qtbot.mouseClick(viewport, left, pos=position)
+    qtbot.keyClick(canvas, Qt.Key.Key_A, ctrl)
+    qtbot.keyClicks(canvas, "Replacement text")
+    qtbot.keyClick(canvas, Qt.Key.Key_Return, ctrl)
+    wait(qtbot, e)
+    assert e.doc.active_layer.properties["text"] == "Replacement text"
+    assert e.doc.active_layer.image.getbbox() is not None
+    qtbot.keyClick(canvas, Qt.Key.Key_Z, ctrl)
+    wait(qtbot, e)
+    assert e.doc.active_layer.properties["text"] == "Hello worLd\nSecond line"
+    if sys.platform == "darwin":
+        qtbot.keyClick(canvas, Qt.Key.Key_Z, ctrl | Qt.KeyboardModifier.ShiftModifier)
+    else:
+        qtbot.keyClick(canvas, Qt.Key.Key_Y, ctrl)
+    wait(qtbot, e)
+    assert e.doc.active_layer.properties["text"] == "Replacement text"
+    copied = []
+    if qapp.platformName() == "offscreen":
+        from eng_viewer.core import image_clipboard
+        monkeypatch.setattr(image_clipboard, "write_clipboard",
+                            lambda payload, *args, **kwargs: copied.append(payload.image))
+    assert e.copy(merged=True)
+    wait(qtbot, e)
+    assert e.status.text().startswith("Copied")
+    if copied:
+        assert copied[0].convert("RGBA").tobytes() == e.doc.composite().tobytes()
+    from eng_viewer.ui.image_editor.dialogs import ExportDialog
+    dialog = ExportDialog(e.doc, e)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.format.setCurrentText("PNG")
+    qtbot.waitUntil(lambda: dialog.result is not None and dialog._job is None, timeout=20000)
+    with Image.open(BytesIO(dialog.result.data)) as exported:
+        assert exported.convert("RGBA").tobytes() == e.doc.composite().tobytes()
+    dialog.reject()
+
+    qtbot.mouseClick(viewport, left, pos=canvas.mapFromScene(QPointF(10, 10)))
+    qtbot.keyClick(canvas, Qt.Key.Key_Return, ctrl)
+    assert len(e.doc.layers) == 2
+
+@pytest.mark.skipif(sys.platform not in {"darwin", "win32"}, reason="macOS and Windows number fields")
+def test_numeric_fields_fit_without_stepper_buttons(workspace, qtbot):
+    from PySide6.QtWidgets import QSlider, QStyle, QStyleOptionSpinBox
+
+    e, _ = workspace
+    e.owner.resize(880, 590)
+    e.set_tool("move")
+    qtbot.waitUntil(lambda: e.transform_fields["x"].isVisible())
+    scroll_view = e.side_scroll.viewport()
+    def check_field(field, value):
+        field.setValue(value)
+        option = QStyleOptionSpinBox()
+        field.initStyleOption(option)
+        for stepper in (QStyle.SubControl.SC_SpinBoxUp, QStyle.SubControl.SC_SpinBoxDown):
+            assert field.style().subControlRect(QStyle.ComplexControl.CC_SpinBox, option, stepper, field).isEmpty()
+        entry = field.lineEdit()
+        margins = entry.textMargins()
+        assert entry.width() >= entry.fontMetrics().horizontalAdvance(entry.text()) + margins.left() + margins.right()
+        assert field.mapTo(scroll_view, field.rect().topRight()).x() < scroll_view.width()
+    for field, value in zip(e.transform_fields.values(), (-12345, -6789, 1536, 1024, -123.4)):
+        check_field(field, value)
+    e.set_tool("shape")
+    qtbot.waitUntil(lambda: e.opacity.isVisible())
+    for field, value in ((e.size, 1000), (e.hardness, 100), (e.opacity, 100), (e.layer_opacity, 100)):
+        check_field(field, value)
+    assert e.layer_opacity.cleanText() == "100" and e.layer_opacity.suffix() == " %"
+    e.layer_opacity_slider.setValue(73)
+    assert e.layer_opacity.value() == 73
+    slider = e.opacity.parentWidget().findChild(QSlider)
+    e.opacity.setValue(63)
+    assert slider.value() == 63

@@ -612,8 +612,13 @@ class MarkWindow(QMainWindow):
     def _update_edit_history(self):
         dock = getattr(self.owner, "_standards", None)
         doc = dock.active_document() if dock is not None else None
-        stack = doc.canvas.stack if doc is not None else self.canvas.undo_stack
-        editing = doc is not None and doc.canvas.editing is not None
+        preview = dock.annotation_canvas(doc) if doc is not None else None
+        if doc is not None and preview is None:
+            self.act_undo.setEnabled(False)
+            self.act_redo.setEnabled(False)
+            return
+        stack = preview.stack if preview is not None else self.canvas.undo_stack
+        editing = preview is not None and preview.editing is not None
         self.act_undo.setEnabled(editing or stack.canUndo())
         self.act_redo.setEnabled(editing or stack.canRedo())
         self.act_undo.setText("Undo" if doc is not None or not stack.canUndo() else f"Undo {stack.undoText()}")

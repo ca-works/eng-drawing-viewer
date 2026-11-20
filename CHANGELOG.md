@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.8 — macOS Universal
+
+- Image Editor numeric fields leave more room for values in narrow panels.
+- Type and edit text on the canvas, adjust the live font size, and resize text with the layer handles.
+- Open Excel workbooks offline in Reference as read-only worksheets with selectable cells and saved formula results.
+
 ## 2.3.6 — macOS Universal
 
 - Rename the dock to Reference and use its arrows to switch open documents.

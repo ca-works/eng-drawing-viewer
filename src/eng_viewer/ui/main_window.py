@@ -1598,9 +1598,11 @@ class MainWindow(QMainWindow):
         getattr(self.image_editor, name)(*args)
 
     def _refresh_edit_history(self, *_):
-        active = self._standards is not None and self._standards.active_document() is not None
+        dock = self._standards
+        doc = dock.active_document() if dock is not None else None
+        enabled = self._mode == "image" if doc is None else dock.annotation_canvas(doc) is not None
         for action in self.image_actions[:2]:
-            action.setEnabled(active or self._mode == "image")
+            action.setEnabled(enabled)
 
     def _edit_history(self, redo):
         if self._standards is None or not self._standards.edit_history(redo):

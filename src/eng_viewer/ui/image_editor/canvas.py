@@ -12,7 +12,7 @@ import math
 
 from PIL import Image
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, QEvent
-from PySide6.QtGui import QColor, QBrush, QCursor, QFont, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform
+from PySide6.QtGui import QColor, QBrush, QCursor, QFont, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
 from .. import icons
@@ -26,7 +26,7 @@ FRAME_COLOR = QColor("#2f8cff")
 
 BRUSH_TOOLS = {"pen", "highlighter", "eraser", "background", "restore", "quick", "clone", "heal"}
 DRAG_TOOLS = BRUSH_TOOLS | {"rect", "ellipse", "lasso", "crop", "move", "arrow", "circle", "shape"}
-CLICK_TOOLS = ("wand", "color", "text", "bubble", "magic", "bucket")
+CLICK_TOOLS = ("wand", "color", "bubble", "magic", "bucket")
 TOOL_KEYS = {Qt.Key.Key_V: "move", Qt.Key.Key_M: "rect", Qt.Key.Key_L: "lasso", Qt.Key.Key_W: "wand",
              Qt.Key.Key_Q: "quick", Qt.Key.Key_C: "crop", Qt.Key.Key_B: "pen", Qt.Key.Key_E: "eraser",
              Qt.Key.Key_S: "clone", Qt.Key.Key_J: "heal", Qt.Key.Key_T: "text", Qt.Key.Key_U: "shape",
@@ -53,6 +53,7 @@ def _rotate_cursor():
 
 class ImageCanvas(QGraphicsView):
     gesture = Signal(str, object, object)
+    textEditFinished = Signal(bool)
     zoomChanged = Signal(float)
     cropChanged = Signal(object)
     toolRequested = Signal(str)
@@ -84,6 +85,8 @@ class ImageCanvas(QGraphicsView):
         self._points = []
         self._cursor = QPointF()
         self._down = False
+        self.text_editor = None
+        self._text_pointer = False
         self._pan = None
         self._space = False
         self._polygon = []
@@ -219,7 +222,8 @@ class ImageCanvas(QGraphicsView):
         self._points = []
         self._polygon = []
         self._down = False
-        self.setCursor(Qt.CursorShape.ArrowCursor if tool == "move" else Qt.CursorShape.CrossCursor)
+        cursor = {"move": Qt.CursorShape.ArrowCursor, "text": Qt.CursorShape.IBeamCursor}
+        self.setCursor(cursor.get(tool, Qt.CursorShape.CrossCursor))
         self.viewport().update()
 
     def fit_image(self):
@@ -288,6 +292,15 @@ class ImageCanvas(QGraphicsView):
         if self.busy or not self._image_size[0]:
             return
         self.setFocus()
+        if self.tool == "text":
+            point = self._free_point(event)
+            editor = self.text_editor
+            self._text_pointer = editor is not None and editor.contains(editor.mapFromScene(point))
+            if self._text_pointer:
+                super().mousePressEvent(event)
+            elif event.button() == Qt.MouseButton.LeftButton:
+                self.gesture.emit("text", [(point.x(), point.y())], event.modifiers())
+            return
         p = self._point(event)
         if self.rulers and (event.position().x() < RULER or event.position().y() < RULER):
             axis = "x" if event.position().x() < RULER else "y"
@@ -429,6 +442,9 @@ class ImageCanvas(QGraphicsView):
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def mouseMoveEvent(self, event):
+        if self._text_pointer and self._pan is None:
+            super().mouseMoveEvent(event)
+            return
         if self._drag is not None:
             self._cursor = self._point(event)
             self._update_layer_drag(event)
@@ -463,6 +479,10 @@ class ImageCanvas(QGraphicsView):
         return rect
 
     def mouseReleaseEvent(self, event):
+        if self._text_pointer and self._pan is None:
+            self._text_pointer = False
+            super().mouseReleaseEvent(event)
+            return
         if self._drag is not None:
             self._update_layer_drag(event)
             self._finish_layer_drag()
@@ -499,8 +519,46 @@ class ImageCanvas(QGraphicsView):
         self._polygon = []
         self.viewport().update()
 
+    def event(self, event):
+        if event.type() == QEvent.Type.ShortcutOverride and getattr(self, "text_editor", None) is not None:
+            if self._text_shortcut(event):
+                event.accept()
+                return True
+        return super().event(event)
+
+    @staticmethod
+    def _text_shortcut(event):
+        return (
+            event.key() == Qt.Key.Key_Escape
+            or ImageCanvas._alternate_redo(event)
+            or (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            or any(event.matches(key) for key in (
+                QKeySequence.StandardKey.Cut, QKeySequence.StandardKey.Copy,
+                QKeySequence.StandardKey.Paste, QKeySequence.StandardKey.SelectAll,
+                QKeySequence.StandardKey.Undo, QKeySequence.StandardKey.Redo,
+            ))
+        )
+
+    @staticmethod
+    def _alternate_redo(event):
+        return (event.key() == Qt.Key.Key_Z
+                and event.modifiers() == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier))
+
     def keyPressEvent(self, event):
         key = event.key()
+        if self.text_editor is not None:
+            if key == Qt.Key.Key_Escape:
+                self.textEditFinished.emit(False)
+            elif self._alternate_redo(event):
+                self.text_editor.document().redo()
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.textEditFinished.emit(True)
+            else:
+                super().keyPressEvent(event)
+                return
+            event.accept()
+            return
         if key == Qt.Key.Key_Space:
             self._space = True
             event.accept()
