@@ -249,8 +249,8 @@ class ReferenceDocument(QWidget):
         self.redo.setEnabled(False)
         self.canvas.historyChanged.connect(self._history_enabled)
 
-        if sys.platform == "win32" and path.suffix.casefold() in {".docx", ".xlsx", ".rtf"}:
-            self.canvas.setToolTip("Offline preview: RTF is text only. Office previews omit active content, linked resources and live fields; spreadsheets use cached formula results. Layout may differ from Microsoft Office.")
+        if sys.platform == "win32" and path.suffix.casefold() in {".docx", ".rtf"}:
+            self.canvas.setToolTip("Offline preview: RTF is text only. Office previews omit active content, linked resources and live fields. Layout may differ from Microsoft Office.")
 
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -390,6 +390,9 @@ class ReferenceDocument(QWidget):
             if color.isValid():
                 self.style.set(mode, "color", color.name())
                 self._colour_icon(color.name())
+
+    def focus_preview(self):
+        self.canvas.setFocus()
 
     def release(self):
         self.conversion_cancel.set()
@@ -630,7 +633,13 @@ class StandardsPanel(QWidget):
                     break
             else:
                 stamp = PageRef.stamp_for(source)
-                doc = ReferenceDocument(self, source, stamp)
+                workbook = sys.platform == "win32" and ext == ".xlsx"
+                if workbook:
+                    from .reference_workbook import WorkbookReference
+
+                    doc = WorkbookReference(source)
+                else:
+                    doc = ReferenceDocument(self, source, stamp)
                 if ext not in self.file_icons:
                     self.file_icons[ext] = self.icon_provider.icon(QFileInfo(str(source)))
                 idx = self.tabs.addTab(doc, self.file_icons[ext], source.name)
@@ -638,14 +647,14 @@ class StandardsPanel(QWidget):
                 self.tabs.setCurrentIndex(idx)
                 if not available or not stamp:
                     doc.message("This file is missing or unavailable. Close this tab and choose the file again.")
-                elif ext == ".pdf":
+                elif ext == ".pdf" or workbook:
                     doc.load(source)
                 else:
                     self._convert(doc, ext)
         if self.tabs.count():
             self.stack.setCurrentIndex(1)
             if sys.platform == "win32":
-                self.tabs.currentWidget().canvas.setFocus()
+                self.tabs.currentWidget().focus_preview()
         self._arrows()
 
     def _convert(self, doc, ext):
@@ -723,7 +732,7 @@ class StandardsPanel(QWidget):
         self.stack.setCurrentIndex(1)
         self.tabs.setCurrentIndex(self.tabs.currentIndex() + delta)
         if sys.platform == "win32" and self.tabs.currentWidget() is not None:
-            self.tabs.currentWidget().canvas.setFocus()
+            self.tabs.currentWidget().focus_preview()
 
     def _arrows(self, *_):
         current = self.tabs.currentIndex()

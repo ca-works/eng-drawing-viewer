@@ -1,9 +1,12 @@
 """Thread boundary and owned pixel conversions for the image editor."""
 from __future__ import annotations
 
+import sys
+
 from PIL import Image
 from PySide6.QtCore import QObject, QRunnable, Signal
 from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QDoubleSpinBox, QSpinBox
 
 
 def to_qimage(image: Image.Image) -> QImage:
@@ -36,3 +39,28 @@ class Job(QRunnable):
             self.signals.finished.emit(None, str(exc))
         else:
             self.signals.finished.emit(result, None)
+
+
+def _configure_number_field(field):
+    if sys.platform != "win32":
+        return
+    # Qt's stylesheet masks collapse the edit area with NoButtons. Give the
+    # stepper subcontrols zero geometry so the numeric editor keeps its width.
+    field.setStyleSheet("""
+        QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+            width: 0; height: 0; padding: 0; border: 0;
+        }
+    """)
+    field.lineEdit().setTextMargins(6, 0, 6, 0)
+
+
+class SpinBox(QSpinBox):
+    def __init__(self):
+        super().__init__()
+        _configure_number_field(self)
+
+
+class DoubleSpinBox(QDoubleSpinBox):
+    def __init__(self):
+        super().__init__()
+        _configure_number_field(self)

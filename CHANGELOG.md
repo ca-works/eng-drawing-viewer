@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.6 (Windows)
+
+- Removed stepper buttons from Image Editor number fields and widened the fields.
+- Added on-canvas editable text with live font sizing, layer transforms and document undo.
+- Added an offline, read-only XLSX grid in Reference with worksheet tabs, clipboard copying and saved formula results.
+
 ## 2.3.5 — Windows x64
 
 - Handle precision touchpad scrolling in the Reference panel.

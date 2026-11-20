@@ -17,6 +17,8 @@ Output in release\windows\:
   ENG-Drawing-Viewer-<version>-Windows-x64-Setup.exe          (with -Installer)
   ENG-Drawing-Viewer-<version>-Windows-x64.cdx.json           software bill of materials
 
+Use -VersionedOutput to place these in release\windows-<version>\ instead.
+
 Release builds pass -OpencvWheel (or set OPENCV_WHEEL) with the minimal OpenCV wheel from
 tools\build_opencv_minimal_windows.py: the published wheel bundles FFmpeg
 (opencv_videoio_ffmpeg500_64.dll), which the app never uses. Without it the build stops unless
@@ -28,6 +30,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1 -In
 param(
     [string]$Python = "3.13.16",
     [switch]$Installer,
+    [switch]$VersionedOutput,
     [switch]$SkipSmokeTest,
     [string]$OpencvWheel = $env:OPENCV_WHEEL,
     [switch]$AllowPublishedOpencv
@@ -50,7 +53,7 @@ $Init = Get-Content -Raw -Encoding UTF8 "src\eng_viewer\__init__.py"
 $Version = [regex]::Match($Init, '__version__ = "([^"]+)"').Groups[1].Value
 if (-not $Version) { throw "Could not read the version from src\eng_viewer\__init__.py" }
 $Base = "ENG-Drawing-Viewer-$Version-Windows-x64"
-$Out = Join-Path $Root "release\windows"
+$Out = Join-Path $Root $(if ($VersionedOutput) { "release\windows-$Version" } else { "release\windows" })
 $Dist = Join-Path $Out "ENG Drawing Viewer"
 $Work = Join-Path $Root "build\windows"
 $Venv = if ($env:BUILD_VENV) { $env:BUILD_VENV } else { Join-Path $Root ".venv-build" }
@@ -110,7 +113,16 @@ if (Test-Path "build\legal-notices") { Remove-Item -Recurse -Force "build\legal-
 Run $Py packaging\collect_licenses.py build\legal-notices
 
 Step "Running PyInstaller"
-if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
+if (Test-Path -LiteralPath $Out) {
+    $ResolvedOut = (Resolve-Path -LiteralPath $Out).Path
+    $ReleaseRoot = Join-Path $Root "release"
+    if (-not $ResolvedOut.StartsWith("$ReleaseRoot\", [StringComparison]::OrdinalIgnoreCase) -or
+        (Get-Item -LiteralPath $Out).Attributes -band [IO.FileAttributes]::ReparsePoint -or
+        (Get-Item -LiteralPath $ReleaseRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "Unexpected output path: $ResolvedOut"
+    }
+    Remove-Item -LiteralPath $ResolvedOut -Recurse -Force
+}
 $env:ENG_VIEWER_TESSDATA = "$Work\tessdata"
 $BuildPath = $env:Path
 try {

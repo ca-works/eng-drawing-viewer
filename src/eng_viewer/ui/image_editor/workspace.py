@@ -9,18 +9,19 @@ document tabs, holding Option/Alt while dropping, or Open, opens a separate docu
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageChops
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QSize, QThreadPool, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QRadialGradient, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QSize, QThreadPool, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QRadialGradient, QPixmap, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox, QDialog,
-    QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QMenu, QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox, QSplitter, QTabBar,
+    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLayout, QListWidget,
+    QListWidgetItem, QMenu, QMessageBox, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar,
     QToolButton, QVBoxLayout, QWidget)
 
-from ...core.image_document import ImageDocument, ImageLayer, BLEND_MODES, _decode_image, affine_about
+from ...core.image_document import ImageDocument, ImageLayer, BLEND_MODES, _decode_image, affine_about, affine_translate
 from ...core import image_tools as T
 from .. import icons
 from ..theme import IS_MAC, ThemeManager, qc
@@ -28,9 +29,10 @@ from ..view_options import ViewOptionsBar
 from ..widgets import (DropdownButton, label, menu_button, primary_button, secondary_button, separator,
     tool_button)
 from .annotations import render_annotation, render_transformed_annotation
-from .canvas import ImageCanvas
-from .common import Job, to_qimage, from_qimage
+from .canvas import ImageCanvas, qtransform
+from .common import DoubleSpinBox, SpinBox, Job, to_qimage, from_qimage
 from .dialogs import ExportDialog, ResizeDialog
+from .point_text import PointText, render_point_text, text_to_canvas
 
 IMAGE_SUFFIXES = {".engimg", ".png", ".jpg", ".jpeg", ".jpe", ".tif", ".tiff", ".bmp", ".webp", ".gif", ".avif", ".heic", ".heif"}
 IMAGE_FILTER = "Images and projects (*.engimg *.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp *.gif *.avif *.heic *.heif)"
@@ -316,7 +318,9 @@ class ImageWorkspace(QWidget):
         tl.addStretch()
         tool_scroll.setWidget(tools)
         split.addWidget(tool_scroll)
+        self._text_draft = None
         self.canvas = ImageCanvas()
+        self.canvas.textEditFinished.connect(self._finish_text)
         self.canvas.gesture.connect(self.on_gesture)
         self.canvas.toolRequested.connect(self.set_tool)
         self.canvas.actionRequested.connect(self._canvas_action)
@@ -337,11 +341,15 @@ class ImageWorkspace(QWidget):
         canvas_column.addWidget(self.placement_bar)
         canvas_column.addWidget(self.canvas, 1)
         split.addWidget(canvas_box)
+        self.side_scroll = QScrollArea()
+        self.side_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.side_scroll.setWidgetResizable(True)
+        self.side_scroll.setMinimumWidth(260)
+        self.side_scroll.setMaximumWidth(345)
         self.side = QWidget()
         self.side.setObjectName("Inspector")
-        self.side.setMinimumWidth(245)
-        self.side.setMaximumWidth(330)
         sl = QVBoxLayout(self.side)
+        sl.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         sl.setContentsMargins(12, 12, 12, 10)
         sl.setSpacing(7)
         self.tool_title = label("Move layer", "title")
@@ -361,7 +369,16 @@ class ImageWorkspace(QWidget):
                                   "shades, 15–25 related shades, 40 and more a broad range.")
         self.preview = BrushPreview()
         bf.addRow(self.preview)
+        self.font_size = self._slider_row(bf, "Font size", 1, 1000, 40)
+        self.font_size.setAccessibleName("Font size")
+        self.font_size.valueChanged.connect(self._resize_text_draft)
+        self.font_size.lineEdit().returnPressed.connect(self.canvas.setFocus)
         sl.addWidget(self.brush_panel)
+        self.commit_text_button = secondary_button("Commit text", "check")
+        self.commit_text_button.clicked.connect(lambda: self._finish_text(True))
+        self.commit_text_button.setToolTip("Commit text (Ctrl+Enter). Esc cancels the edit.")
+        self.commit_text_button.hide()
+        sl.addWidget(self.commit_text_button)
         self.color_button = QPushButton("Colour")
         self.color_button.setToolTip("Foreground colour for the brush, Paint Bucket, text and shapes")
         self.color_button.clicked.connect(self.choose_color)
@@ -399,20 +416,27 @@ class ImageWorkspace(QWidget):
         mv.addWidget(self.auto_select)
         grid = QGridLayout()
         grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(4)
+        grid.setVerticalSpacing(3)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         self.transform_fields = {}
         for i, (key, title, lo, hi, suffix) in enumerate((("x", "X", -1e6, 1e6, " px"), ("y", "Y", -1e6, 1e6, " px"),
                                                           ("w", "W", 1, 1e6, " px"), ("h", "H", 1, 1e6, " px"),
                                                           ("angle", "Angle", -180, 180, "°"))):
-            field = QDoubleSpinBox()
+            field = DoubleSpinBox()
             field.setRange(lo, hi)
             field.setDecimals(1 if key == "angle" else 0)
             field.setSuffix(suffix)
+            if sys.platform == "win32":
+                metrics = field.fontMetrics()
+                width = max(metrics.horizontalAdvance(field.textFromValue(end) + suffix) for end in (lo, hi))
+                field.setMinimumWidth(width + 22)
             field.setKeyboardTracking(False)
             field.editingFinished.connect(lambda k=key: self._transform_field_changed(k))
+            field.setAccessibleName(title)
             self.transform_fields[key] = field
-            grid.addWidget(label(title, "small"), i // 2, (i % 2) * 2)
-            grid.addWidget(field, i // 2, (i % 2) * 2 + 1)
+            grid.addWidget(label(title, "small"), 2 * (i // 2), i % 2)
+            grid.addWidget(field, 2 * (i // 2) + 1, i % 2)
         self.keep_aspect = QCheckBox("Keep proportions")
         self.keep_aspect.setChecked(True)
         self.keep_aspect.setToolTip("Typing W or H changes the other to match")
@@ -509,10 +533,10 @@ class ImageWorkspace(QWidget):
         opacity_row = QHBoxLayout()
         self.layer_opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self.layer_opacity_slider.setRange(0, 100)
-        self.layer_opacity = QSpinBox()
+        self.layer_opacity = SpinBox()
         self.layer_opacity.setRange(0, 100)
         self.layer_opacity.setSuffix(" %")
-        self.layer_opacity.setFixedWidth(70)
+        self.layer_opacity.setFixedWidth(max(70, self.layer_opacity.sizeHint().width()))
         self.layer_opacity_slider.valueChanged.connect(self.layer_opacity.setValue)
         self.layer_opacity.valueChanged.connect(self.layer_opacity_slider.setValue)
         self.layer_opacity_slider.sliderReleased.connect(self.change_layer_opacity)
@@ -532,7 +556,8 @@ class ImageWorkspace(QWidget):
         queue = secondary_button("Send to PowerPoint Queue", "queue-add")
         queue.clicked.connect(self.send_to_queue)
         sl.addWidget(queue)
-        split.addWidget(self.side)
+        self.side_scroll.setWidget(self.side)
+        split.addWidget(self.side_scroll)
         split.setStretchFactor(1, 1)
         split.setSizes([52, 850, 265])
         root.addWidget(split, 1)
@@ -582,10 +607,11 @@ class ImageWorkspace(QWidget):
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(lo, hi)
         slider.setValue(value)
-        spin = QSpinBox()
+        spin = SpinBox()
         spin.setRange(lo, hi)
         spin.setValue(value)
-        spin.setFixedWidth(65)
+        spin.setMinimumWidth(70)
+        spin.setFixedWidth(max(70, spin.sizeHint().width()))
         slider.valueChanged.connect(spin.setValue)
         spin.valueChanged.connect(slider.setValue)
         spin.valueChanged.connect(self._brush_changed)
@@ -650,6 +676,7 @@ class ImageWorkspace(QWidget):
         return True
 
     def mutate(self, description, fn, snapshot=True, clear_selection=False, after=None):
+        self._finish_text(False)
         doc = self.doc
         if doc is None:
             return
@@ -832,6 +859,7 @@ class ImageWorkspace(QWidget):
     def _tab_changed(self, _):
         if self._refreshing or self._job:
             return
+        self._finish_text(False)
         self._clone_source = self._preview_cache = None
         self.canvas.reset_gesture()
         self.placement_bar.hide()
@@ -841,6 +869,8 @@ class ImageWorkspace(QWidget):
         if self._job:
             return False
         state = self.states[index]
+        if self.state is state:
+            self._finish_text(False)
         if state.doc.dirty:
             answer = QMessageBox.question(self, "Save editable image?", f"Save changes to {state.name}?",
                                            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
@@ -911,6 +941,10 @@ class ImageWorkspace(QWidget):
         return self.run("Saving project", lambda: doc.save_project(path), saved)
 
     def set_tool(self, tool):
+        if tool != self.canvas.tool:
+            self.side_scroll.verticalScrollBar().setValue(0)
+        if tool != "text":
+            self._finish_text(True)
         self.canvas.set_tool(tool)
         for key, button in self.tool_buttons.items():
             button.setChecked(key == tool)
@@ -922,10 +956,11 @@ class ImageWorkspace(QWidget):
                          "shape", "circle", "arrow", "wand", "magic", "bucket")
         self.brush_panel.setVisible(brush)
         form = self.brush_panel.layout()
-        for row in (0, 1, 4):  # size, hardness and the brush preview mean nothing to a click tool
-            form.setRowVisible(row, not click_fill)
+        for row in (0, 1, 4):  # brush size, hardness, and brush preview
+            form.setRowVisible(row, not click_fill and tool != "text")
         form.setRowVisible(2, tool != "wand")
         form.setRowVisible(3, click_fill or tool == "background")
+        form.setRowVisible(5, tool == "text")
         self.move_panel.setVisible(tool == "move")
         self.magic_panel.setVisible(click_fill)
         self.stop_edges.setVisible(tool == "magic")
@@ -951,7 +986,7 @@ class ImageWorkspace(QWidget):
                          "Space or middle-mouse drag pans.",
                  "crop": "Drag a crop, adjust its corners, then press Enter. Escape cancels.",
                  "polygon": "Click vertices. Double-click or Enter closes the selection.",
-                 "text": "Click to add text. Double-click its layer to edit it.",
+                 "text": "Click to add or edit text. Ctrl+Enter commits. Esc cancels.",
                  "bubble": "Click to add a numbered comment. Comments remain editable in PowerPoint."}
         self.hint.setText(hints.get(tool, f"Work in source pixels. Shift adds to selections; {OPTION} subtracts."))
         self._brush_changed()
@@ -975,6 +1010,9 @@ class ImageWorkspace(QWidget):
             self.color = color.name()
             self._update_color_button()
             self._brush_changed()
+            if self.canvas.text_editor is not None:
+                self.canvas.text_editor.setDefaultTextColor(color)
+                self.canvas.setFocus()
 
     def _update_color_button(self):
         swatch = QPixmap(28, 16)
@@ -1000,6 +1038,9 @@ class ImageWorkspace(QWidget):
 
     def on_gesture(self, tool, points, mods):
         if not self.doc or self._job:
+            return
+        if tool == "text":
+            self._click_text(*points[0])
             return
         doc, layer = self.doc, self.active_layer
         if layer is None:
@@ -1036,14 +1077,9 @@ class ImageWorkspace(QWidget):
         if layer.locked:
             self.status.setText("Unlock the active layer before editing it.")
             return
-        if tool in ("pen", "highlighter", "text", "shape", "circle", "arrow", "bubble"):
+        if tool in ("pen", "highlighter", "shape", "circle", "arrow", "bubble"):
             props = dict(tool=tool, points=points, color=self.color, width=self.size.value(), opacity=opacity,
                          render_size=list(doc.size))
-            if tool == "text":
-                text, ok = QInputDialog.getMultiLineText(self, "Add text", "Text")
-                if not ok or not text:
-                    return
-                props["text"] = text
             if tool == "bubble":
                 text, ok = QInputDialog.getMultiLineText(self, "Numbered comment", "Comment")
                 if not ok:
@@ -1059,7 +1095,7 @@ class ImageWorkspace(QWidget):
             # Keep sparse annotations small instead of a full canvas for each stroke.
             props["render_crop"] = list(bounds)
             new = ImageLayer(props.get("text", props.get("comment", tool.title()))[:60] or tool.title(), image.crop(bounds),
-                             kind="text" if tool == "text" else "annotation", properties=props,
+                             kind="annotation", properties=props,
                              x=bounds[0], y=bounds[1])
             self.mutate("Add annotation", lambda d: d.add_layer(new), snapshot=False)
             return
@@ -1172,6 +1208,7 @@ class ImageWorkspace(QWidget):
     def _layer_selected(self, row):
         if self._refreshing or not self.doc or row < 0:
             return
+        self._finish_text(False)
         self.doc.active_index = len(self.doc.layers) - row - 1
         self._show_active_layer()
         self._update_enabled()
@@ -1185,8 +1222,9 @@ class ImageWorkspace(QWidget):
 
     def change_layer_opacity(self):
         if not self._refreshing and self.active_layer is not None:
-            value = self.layer_opacity.value() / 100
-            self.mutate("Layer opacity", lambda d: setattr(d.active_layer, "opacity", value))
+            value = self.layer_opacity.value()
+            if value != round(self.active_layer.opacity * 100):
+                self.mutate("Layer opacity", lambda d: setattr(d.active_layer, "opacity", value / 100))
 
     def change_blend(self, value):
         if not self._refreshing and self.active_layer is not None and value in BLEND_MODES:
@@ -1279,6 +1317,104 @@ class ImageWorkspace(QWidget):
         if ok and name:
             self.mutate("Rename layer", lambda d: setattr(d.active_layer, "name", name))
 
+    def _click_text(self, x, y):
+        if self._text_draft is not None:
+            self._finish_text(True)
+            return
+        if not (0 <= x < self.doc.width and 0 <= y < self.doc.height):
+            return
+        point = QPointF(x, y)
+        for layer in reversed(self.doc.layers):
+            if not layer.visible or layer.locked or layer.properties.get("tool") != "text":
+                continue
+            try:
+                editor = PointText(layer.properties)
+                editor.setTransform(qtransform(text_to_canvas(layer)))
+            except (ValueError, TypeError, KeyError, IndexError):
+                continue
+            if editor.contains(editor.mapFromScene(point)):
+                self._start_text(layer=layer, point=point)
+                return
+        self._start_text(point=point)
+
+    def _start_text(self, *, layer=None, point=None):
+        self._finish_text(False)
+        if layer is None:
+            props = dict(tool="text", text="", width=self.font_size.value(), margin=0, color=self.color)
+            matrix = affine_translate(point.x(), point.y())
+        else:
+            try:
+                matrix = text_to_canvas(layer)
+                props = {key: layer.properties[key] for key in ("tool", "text", "width", "color")}
+                props["margin"] = layer.properties.get("margin", 2)
+            except (ValueError, TypeError, KeyError, IndexError):
+                self.status.setText("Could not reopen this text layer for editing.")
+                return
+            self.font_size.setValue(round(props["width"]))
+        editor = PointText(props)
+        editor.setTransform(qtransform(matrix))
+        editor.setZValue(4)
+        editor.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+        self._text_draft = (layer, props, matrix)
+        self.canvas.text_editor = editor
+        if layer is not None:
+            self.canvas.item.setPixmap(QPixmap.fromImage(to_qimage(self.doc.composite(omit=layer))))
+        self.canvas.scene_.addItem(editor)
+        self.canvas.setFocus()
+        editor.setFocus()
+        cursor = editor.textCursor()
+        position = -1
+        if layer is not None and point is not None:
+            position = editor.document().documentLayout().hitTest(
+                editor.mapFromScene(point), Qt.HitTestAccuracy.FuzzyHit)
+        if position < 0:
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+        else:
+            cursor.setPosition(position)
+        editor.setTextCursor(cursor)
+        self.commit_text_button.show()
+
+    def _resize_text_draft(self, size):
+        if self.canvas.text_editor is not None:
+            self.canvas.text_editor.set_size(size)
+
+    def _finish_text(self, commit):
+        if self._text_draft is None:
+            return
+        layer, initial, matrix = self._text_draft
+        editor = self.canvas.text_editor
+        self._text_draft = self.canvas.text_editor = None
+        self.canvas._text_pointer = False
+        self.canvas.scene_.removeItem(editor)
+        self.commit_text_button.hide()
+        if layer is not None:
+            self.canvas.item.setPixmap(QPixmap.fromImage(to_qimage(self._composite)))
+        if not commit:
+            return
+        props = dict(initial, text=editor.toPlainText(), width=editor.font().pixelSize(),
+                     color=editor.defaultTextColor().name())
+        if (layer is None and not props["text"].strip()) or (layer is not None and props == initial):
+            return
+        try:
+            image, x, y = render_point_text(props, matrix)
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        if layer is None:
+            new = ImageLayer(props["text"][:60], image, kind="text", properties=props, x=x, y=y,
+                             opacity=self.opacity.value() / 100)
+            self.mutate("Add text", lambda doc: doc.insert_layer(new, len(doc.layers), "Add text"), snapshot=False)
+        else:
+            def apply(doc):
+                if layer.mask is not None and (layer.mask.size != image.size or (layer.x, layer.y) != (x, y)):
+                    mask = Image.new("L", image.size, 255)
+                    mask.paste(layer.mask, (layer.x - x, layer.y - y))
+                    layer.mask = mask
+                layer.properties, layer.image, layer.x, layer.y = props, image, x, y
+                layer.source = None
+                doc.active_index = doc.layers.index(layer)
+            self.mutate("Edit text", apply)
+
     def edit_layer(self):
         if self.active_layer is None:
             return
@@ -1286,7 +1422,11 @@ class ImageWorkspace(QWidget):
         if layer.locked:
             return
         props = dict(layer.properties)
-        key = "text" if props.get("tool") == "text" else "comment" if props.get("tool") == "bubble" else None
+        if props.get("tool") == "text":
+            self.set_tool("text")
+            self._start_text(layer=layer)
+            return
+        key = "comment" if props.get("tool") == "bubble" else None
         if not key:
             self.rename_layer()
             return
